@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * Content type detected by the clipboard monitor.
@@ -233,6 +235,7 @@ class ClipboardMonitor(context: Context) {
 
     /**
      * Set image to clipboard (from Base64).
+     * Saves the bitmap to a temporary file and sets it via URI.
      */
     fun setImageToClipboard(base64Content: String) {
         android.os.Handler(android.os.Looper.getMainLooper()).post {
@@ -245,10 +248,30 @@ class ClipboardMonitor(context: Context) {
                 }
 
                 lastImageChecksum = EncryptionHelper.computeChecksum(imageBytes)
-                val clip = ClipData.newPlainText("", "") // Placeholder, set actual image content
+
+                // Save bitmap to temporary file
+                val cacheDir = appContext.cacheDir
+                val imageFile = File(cacheDir, "clipsync_temp_${System.currentTimeMillis()}.png")
+                FileOutputStream(imageFile).use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                }
+
+                // Get content URI for the file
+                val imageUri = Uri.fromFile(imageFile)
+
+                // Create clip data with image URI
+                val clip = ClipData.newUri(appContext.contentResolver, "ClipSync", imageUri)
                 clipboardManager.setPrimaryClip(clip)
-                // Do not emit here: observers treat StateFlow changes as local user copies.
-                Log.d(TAG, "Set clipboard image (${imageBytes.size} bytes)")
+
+                // Schedule cleanup of temporary file after a delay
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    if (imageFile.exists()) {
+                        imageFile.delete()
+                        Log.d(TAG, "Cleaned up temporary image file")
+                    }
+                }, 60000) // Delete after 1 minute
+
+                Log.d(TAG, "Set clipboard image (${imageBytes.size} bytes, ${bitmap.width}x${bitmap.height})")
             } catch (e: Exception) {
                 Log.e(TAG, "Cannot set image to clipboard", e)
             }
