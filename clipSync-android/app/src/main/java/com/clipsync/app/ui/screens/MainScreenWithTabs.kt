@@ -1,12 +1,11 @@
 package com.clipsync.app.ui.screens
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.History
@@ -19,6 +18,8 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -26,11 +27,13 @@ import com.clipsync.app.core.SyncStatus
 import com.clipsync.app.data.entities.ClipboardHistoryItem
 import com.clipsync.app.data.entities.DeviceEntity
 import com.clipsync.app.network.ConnectionState
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 /**
  * WeChat-style main screen with bottom tab navigation.
- * All screens are displayed inline without navigation transitions.
+ * Supports horizontal swipe gesture to switch tabs.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MainScreenWithTabs(
     selectedTab: Int,
@@ -58,11 +61,34 @@ fun MainScreenWithTabs(
     onLogout: () -> Unit,
     onClearError: () -> Unit
 ) {
+    val pagerState = rememberPagerState(
+        initialPage = selectedTab,
+        pageCount = { 4 }
+    )
+
+    // Sync pager state when selectedTab changes from external (e.g., button click)
+    LaunchedEffect(selectedTab) {
+        if (pagerState.currentPage != selectedTab) {
+            pagerState.animateScrollToPage(selectedTab)
+        }
+    }
+
+    // Listen to pager state changes and update selectedTab (for swipe gestures)
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.currentPage }
+            .distinctUntilChanged()
+            .collect { page ->
+                onTabSelected(page)
+            }
+    }
+
     Scaffold(
         bottomBar = {
             WeChatBottomNavigation(
                 selectedTab = selectedTab,
-                onTabSelected = onTabSelected
+                onTabSelected = { newTab ->
+                    onTabSelected(newTab)
+                }
             )
         }
     ) { paddingValues ->
@@ -71,15 +97,12 @@ fun MainScreenWithTabs(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Animated content switching with fade transition
-            AnimatedContent(
-                targetState = selectedTab,
-                transitionSpec = {
-                    fadeIn(animationSpec = androidx.compose.animation.core.tween(200)) togetherWith fadeOut(animationSpec = androidx.compose.animation.core.tween(150))
-                },
-                label = "TabTransition"
-            ) { tab ->
-                when (tab) {
+            HorizontalPager(
+                state = pagerState,
+                userScrollEnabled = true,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                when (page) {
                     0 -> HomeScreen(
                         connectionState = connectionState,
                         syncStatus = syncStatus,
