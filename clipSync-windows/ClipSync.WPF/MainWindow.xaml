@@ -149,19 +149,6 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <!-- 错误提示条 -->
-                    <Border x:Name="ErrorBanner" Background="{StaticResource ErrorColor}" Opacity="0.1"
-                            CornerRadius="{StaticResource MediumRadius}" Padding="16" Margin="0,0,0,16" Visibility="Collapsed">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock x:Name="ErrorText" Foreground="{StaticResource ErrorColor}" TextWrapping="Wrap" VerticalAlignment="Center" FontWeight="Medium"/>
-                            <Button Grid.Column="1" Content="✕" Padding="8,4" Margin="12,0,0,0" Background="Transparent" Foreground="{StaticResource ErrorColor}" BorderThickness="0" Cursor="Hand"/>
-                        </Grid>
-                    </Border>
-
                     <!-- 标签页内容 -->
                     <ContentControl x:Name="TabContent" Grid.Row="1"/>
                 </Grid>

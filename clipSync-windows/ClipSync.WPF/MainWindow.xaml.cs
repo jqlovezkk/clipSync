@@ -52,7 +52,6 @@ namespace ClipSync.WPF
 
             MainTabs.SelectionChanged += OnTabChanged;
             // RefreshDevicesButton.Click += async (s, e) => await _syncEngine.RequestDeviceListAsync(); // Removed - button deleted from XAML
-            ErrorBanner.MouseLeftButtonUp += (s, e) => ErrorBanner.Visibility = Visibility.Collapsed;
 
             SetupLoginView();
             SetupHomeView();
@@ -281,6 +280,7 @@ namespace ClipSync.WPF
 
             var listHost = new Grid();
             Grid.SetRow(listHost, 2);
+            listHost.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
             var listBorder = new Border
             {
@@ -288,51 +288,54 @@ namespace ClipSync.WPF
                 BorderBrush = GetBrush("BorderColor"),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(14),
-                Padding = new Thickness(16)
+                Padding = new Thickness(16),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch
             };
+            Grid.SetRow(listBorder, 0);
 
             var listScrollViewer = new ScrollViewer
             {
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                VerticalContentAlignment = VerticalAlignment.Stretch,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch
             };
 
-            _deviceListPanel = new StackPanel();
+            _deviceListPanel = new StackPanel
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            _deviceEmptyState = new Border
+            {
+                Background = GetBrush("SurfaceElevatedColor"),
+                BorderBrush = GetBrush("BorderColor"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(14),
+                Padding = new Thickness(24),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock
+                {
+                    Text = "当前没有可显示的设备，稍后刷新或确认其他设备是否已登录。",
+                    FontSize = 14,
+                    TextAlignment = TextAlignment.Center,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = GetBrush("TextSecondaryColor")
+                }
+            };
+            _deviceEmptyState.Visibility = Visibility.Collapsed;
+
             listScrollViewer.Content = _deviceListPanel;
             listBorder.Child = listScrollViewer;
             listHost.Children.Add(listBorder);
-
-            _deviceEmptyState = new Border
-            {
-                Visibility = Visibility.Collapsed,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            _deviceEmptyState.Child = new StackPanel
-            {
-                Children =
-                {
-                    new TextBlock
-                    {
-                        Text = "No devices yet",
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        FontSize = 18,
-                        FontWeight = FontWeights.Medium,
-                        Foreground = GetBrush("TextSecondaryColor")
-                    },
-                    new TextBlock
-                    {
-                        Text = "确认手机已登录同一账号后，可点击 Refresh 重新拉取",
-                        Margin = new Thickness(0, 8, 0, 0),
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        FontSize = 13,
-                        Foreground = GetBrush("TextMutedColor")
-                    }
-                }
-            };
             listHost.Children.Add(_deviceEmptyState);
+            root.Children.Add(listHost);
 
             _devicesView.Content = root;
+            AppLogger.Info("MainWindow", "设备页初始化完成，已创建空状态占位控件");
         }
 
         private void SetupSettingsView()
@@ -414,12 +417,17 @@ namespace ClipSync.WPF
         {
             Dispatcher.Invoke(() =>
             {
-                ErrorText.Text = message;
-                ErrorBanner.Visibility = Visibility.Visible;
-
+                // Log the error for debugging
+                System.Diagnostics.Debug.WriteLine($"[MainWindow] Error occurred: {message}");
+                
                 if (_loginView != null && !_isLoggedIn)
                 {
                     _loginView.ShowError(message);
+                }
+                else if (_isLoggedIn)
+                {
+                    // Show error in a message box for logged-in users since we removed ErrorBanner
+                    MessageBox.Show(message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             });
         }
@@ -730,7 +738,8 @@ namespace ClipSync.WPF
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(12),
                 Padding = new Thickness(16),
-                Margin = new Thickness(0, 0, 0, 12)
+                Margin = new Thickness(0, 0, 0, 12),
+                HorizontalAlignment = HorizontalAlignment.Stretch
             };
 
             var layout = new Grid();

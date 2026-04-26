@@ -43,11 +43,6 @@ namespace ClipSync.WPF
             var mainWindow = new MainWindow(_settingsManager, _syncEngine, _trayIcon);
             mainWindow.Show();
 
-            if (_settingsManager.Settings.MinimizeToTray)
-            {
-                mainWindow.Hide();
-            }
-
             await _syncEngine.StartAsync();
         }
 
