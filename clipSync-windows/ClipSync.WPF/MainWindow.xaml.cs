@@ -81,6 +81,7 @@ namespace ClipSync.WPF
         {
             _historyView = new HistoryView();
             _historyView.RefreshRequested += async () => await LoadHistoryAsync();
+            _historyView.ClearRequested += async () => await ClearHistoryAsync();
             _historyView.CopyRequested += (item) =>
             {
                 try
@@ -567,6 +568,34 @@ namespace ClipSync.WPF
                     _ = LoadHistoryAsync();
                 }
             }
+        }
+
+        private async Task ClearHistoryAsync()
+        {
+            var result = MessageBox.Show(
+                "确定要清空所有剪贴板历史记录吗？此操作不可撤销。",
+                "清空历史记录",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (result != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            await _syncEngine.ClearHistoryAsync();
+            _historyItemCount = 0;
+
+            if (_historyView != null)
+            {
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    _historyView.SetItems(new List<Network.ClipboardItem>());
+                    UpdateHomeSummary();
+                });
+            }
+
+            AppLogger.Info("MainWindow", "剪贴板历史记录已清空");
         }
 
         private void OnTabChanged(object sender, SelectionChangedEventArgs e)

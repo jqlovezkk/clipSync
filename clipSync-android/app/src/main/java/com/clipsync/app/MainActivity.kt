@@ -4,16 +4,24 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
 import com.clipsync.app.ui.screens.DeviceListScreen
 import com.clipsync.app.ui.screens.HistoryScreen
 import com.clipsync.app.ui.screens.HomeScreen
 import com.clipsync.app.ui.screens.LoginScreen
+import com.clipsync.app.ui.screens.MainScreenWithTabs
 import com.clipsync.app.ui.screens.SettingsScreen
 import com.clipsync.app.ui.theme.ClipSyncTheme
 import com.clipsync.app.viewmodel.MainUiState
@@ -32,10 +40,15 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             ClipSyncTheme {
-                ClipSyncApp(
-                    mainViewModel = mainViewModel,
-                    settingsViewModel = settingsViewModel
-                )
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    ClipSyncApp(
+                        mainViewModel = mainViewModel,
+                        settingsViewModel = settingsViewModel
+                    )
+                }
             }
         }
     }
@@ -46,7 +59,6 @@ fun ClipSyncApp(
     mainViewModel: MainViewModel,
     settingsViewModel: SettingsViewModel
 ) {
-    val navController = rememberNavController()
     val uiState by mainViewModel.uiState.collectAsStateWithLifecycle()
     val connectionState by mainViewModel.connectionState.collectAsStateWithLifecycle()
     val syncStatus by mainViewModel.syncStatus.collectAsStateWithLifecycle()
@@ -61,11 +73,20 @@ fun ClipSyncApp(
     val deviceName by settingsViewModel.deviceName.collectAsStateWithLifecycle()
     val username by settingsViewModel.username.collectAsStateWithLifecycle()
 
-    NavHost(
-        navController = navController,
-        startDestination = if (uiState is MainUiState.Authenticated) "home" else "login"
-    ) {
-        composable("login") {
+    // WeChat-style bottom tab navigation
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+
+    when (uiState) {
+        is MainUiState.Loading -> {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = androidx.compose.ui.Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
+        }
+        is MainUiState.Unauthenticated,
+        is MainUiState.LoggingIn -> {
             LoginScreen(
                 onLogin = { serverUrl, httpUrl, user, password ->
                     mainViewModel.login(serverUrl, httpUrl, user, password)
@@ -78,60 +99,35 @@ fun ClipSyncApp(
                 onClearError = { mainViewModel.clearError() }
             )
         }
-
-        composable("home") {
-            HomeScreen(
+        is MainUiState.Authenticated -> {
+            MainScreenWithTabs(
+                selectedTab = selectedTab,
+                onTabSelected = { selectedTab = it },
                 connectionState = connectionState,
                 syncStatus = syncStatus,
-                currentUsername = username,
-                onNavigateToHistory = { navController.navigate("history") },
-                onNavigateToDevices = { navController.navigate("devices") },
-                onNavigateToSettings = { navController.navigate("settings") },
-                onLogout = {
-                    mainViewModel.logout()
-                    navController.navigate("login") {
-                        popUpTo("home") { inclusive = true }
-                    }
-                }
-            )
-        }
-
-        composable("history") {
-            HistoryScreen(
                 history = history,
-                onCopy = { content -> mainViewModel.copyToClipboard(content) },
-                onClearHistory = { mainViewModel.clearHistory() }
-            )
-        }
-
-        composable("devices") {
-            DeviceListScreen(
                 devices = devices,
-                onUnregister = { deviceId -> mainViewModel.unregisterDevice(deviceId) },
-                onRefresh = { mainViewModel.requestDeviceList() }
-            )
-        }
-
-        composable("settings") {
-            SettingsScreen(
                 serverUrl = serverUrl,
                 httpUrl = httpUrl,
                 syncEnabled = syncEnabled,
                 encryptionEnabled = encryptionEnabled,
                 deviceName = deviceName,
                 username = username,
+                errorMessage = errorMessage,
+                onCopyClipboard = { id -> mainViewModel.copyToClipboard(id) },
+                onClearHistory = { mainViewModel.clearHistory() },
+                onUnregisterDevice = { deviceId -> mainViewModel.unregisterDevice(deviceId) },
+                onRefreshDevices = { mainViewModel.requestDeviceList() },
                 onServerUrlChange = { settingsViewModel.setServerUrl(it) },
                 onHttpUrlChange = { settingsViewModel.setHttpUrl(it) },
                 onSyncEnabledChange = { settingsViewModel.setSyncEnabled(it) },
                 onEncryptionEnabledChange = { settingsViewModel.setEncryptionEnabled(it) },
                 onDeviceNameChange = { settingsViewModel.setDeviceName(it) },
-                onClearHistory = { mainViewModel.clearHistory() },
                 onLogout = {
                     mainViewModel.logout()
-                    navController.navigate("login") {
-                        popUpTo("settings") { inclusive = true }
-                    }
-                }
+                    selectedTab = 0
+                },
+                onClearError = { mainViewModel.clearError() }
             )
         }
     }

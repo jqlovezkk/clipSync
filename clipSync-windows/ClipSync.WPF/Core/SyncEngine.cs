@@ -445,6 +445,12 @@ namespace ClipSync.WPF.Core
             return await _database.GetClipboardHistoryAsync(limit);
         }
 
+        public async Task ClearHistoryAsync()
+        {
+            if (_database == null) return;
+            await _database.ClearHistoryAsync();
+        }
+
         private async Task SaveClipboardItemAsync(ClipboardChangedEventArgs args, string sourceDeviceId, string sourceDeviceName)
         {
             if (_database == null) return;
