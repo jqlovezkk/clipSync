@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -13,6 +14,7 @@ import com.clipsync.app.core.ClipboardContentType
 import com.clipsync.app.core.ClipboardMonitor
 import com.clipsync.app.core.SettingsManager
 import com.clipsync.app.core.SyncEngine
+import com.clipsync.app.core.SyncStatus
 import com.clipsync.app.data.AppDatabase
 import com.clipsync.app.network.ConnectionState
 import com.clipsync.app.network.HeartbeatManager
@@ -24,6 +26,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
@@ -36,6 +41,22 @@ import kotlinx.serialization.json.jsonPrimitive
  * Runs persistently to ensure clipboard changes are captured even when app is in background.
  */
 class ClipboardService : Service() {
+
+    // Binder for local service access
+    private val binder = LocalBinder()
+
+    inner class LocalBinder : Binder() {
+        fun getService(): ClipboardService = this@ClipboardService
+    }
+
+    override fun onBind(intent: Intent?): IBinder = binder
+
+    // Exposed state flows for bound clients (e.g., MainViewModel)
+    private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
+    val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
+
+    private val _syncStatus = MutableStateFlow<SyncStatus>(SyncStatus.Idle)
+    val syncStatus: StateFlow<SyncStatus> = _syncStatus.asStateFlow()
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -82,16 +103,25 @@ class ClipboardService : Service() {
         // Setup clipboard change monitoring
         setupClipboardMonitoring()
 
+        // Observe sync engine status
+        observeSyncStatus()
+
         // Connect to server
         connectToServer()
+    }
+
+    private fun observeSyncStatus() {
+        serviceScope.launch {
+            syncEngine.syncStatus.collectLatest { status ->
+                _syncStatus.value = status
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "Service started")
         return START_STICKY
     }
-
-    override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
         Log.d(TAG, "Service destroyed")
@@ -151,8 +181,9 @@ class ClipboardService : Service() {
     private fun observeConnectionState() {
         serviceScope.launch {
             webSocketClient.connectionState.collectLatest { state ->
+                _connectionState.value = state
                 when (state) {
-                    ConnectionState.Connected -> {
+                    is ConnectionState.Connected -> {
                         Log.d(TAG, "Service WebSocket connected, sending auth")
                         sendAuth()
                     }
@@ -161,6 +192,7 @@ class ClipboardService : Service() {
                     }
                     ConnectionState.Disconnected -> {
                         Log.d(TAG, "Service WebSocket disconnected")
+                        _syncStatus.value = SyncStatus.Idle
                     }
                     is ConnectionState.Error -> {
                         Log.e(TAG, "Service WebSocket error: ${state.message}")
@@ -298,6 +330,17 @@ class ClipboardService : Service() {
             } else {
                 Log.w(TAG, "Skipping auth send because token is empty")
             }
+        }
+    }
+
+    /**
+     * Request device list from server.
+     */
+    fun requestDeviceList() {
+        if (webSocketClient.isConnected()) {
+            webSocketClient.send(WsMessageBuilder.deviceList())
+        } else {
+            Log.w(TAG, "Cannot request device list: WebSocket not connected")
         }
     }
 

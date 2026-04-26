@@ -1,8 +1,12 @@
 package com.clipsync.app.viewmodel
 
 import android.app.Application
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.os.Build
+import android.os.IBinder
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -14,11 +18,6 @@ import com.clipsync.app.data.entities.ClipboardHistoryItem
 import com.clipsync.app.data.entities.DeviceEntity
 import com.clipsync.app.network.ApiClient
 import com.clipsync.app.network.ConnectionState
-import com.clipsync.app.network.HeartbeatManager
-import com.clipsync.app.network.MessageType
-import com.clipsync.app.network.WebSocketClient
-import com.clipsync.app.network.WsMessage
-import com.clipsync.app.network.WsMessageBuilder
 import com.clipsync.app.service.ClipboardService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,19 +32,38 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 
 /**
- * Main ViewModel handling authentication, WebSocket connection, clipboard sync,
- * history, and device management.
+ * Main ViewModel handling authentication, UI state, and local data.
+ * Network and clipboard sync are handled by ClipboardService.
  */
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val settingsManager = SettingsManager(application)
     private val database = AppDatabase.getInstance(application)
-    private val webSocketClient = WebSocketClient()
-    private val clipboardMonitor = ClipboardMonitor(application)
     private val apiClient = ApiClient().apply {
         viewModelScope.launch { baseUrl = settingsManager.getHttpUrl() }
     }
-    private val heartbeatManager = HeartbeatManager(webSocketClient)
+
+    // ClipboardService binding
+    private var clipboardService: ClipboardService? = null
+    private var isBound = false
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val binder = service as ClipboardService.LocalBinder
+            clipboardService = binder.getService()
+            isBound = true
+            Log.d(TAG, "ClipboardService bound successfully")
+
+            // Read current state from service
+            updateConnectionStateFromService()
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            clipboardService = null
+            isBound = false
+            Log.d(TAG, "ClipboardService disconnected")
+        }
+    }
 
     // ─── UI State ───
 
@@ -67,11 +85,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
+    // ClipboardMonitor for local clipboard operations (copyToClipboard, setTextToClipboard)
+    private val clipboardMonitor = ClipboardMonitor(application)
+
     init {
-        observeWebSocketState()
         observeHistory()
         observeDevices()
         checkLoginState()
+        bindToClipboardService()
     }
 
     private fun checkLoginState() {
@@ -80,32 +101,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (isLoggedIn) {
                 _uiState.value = MainUiState.Authenticated
                 setClipboardServiceRunning(true)
-                connectToServer()
             } else {
                 _uiState.value = MainUiState.Unauthenticated
             }
         }
     }
 
-    private fun observeWebSocketState() {
+    private fun bindToClipboardService() {
+        val intent = Intent(getApplication(), ClipboardService::class.java)
+        val bound = getApplication<Application>().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        if (bound) {
+            Log.d(TAG, "Binding to ClipboardService requested")
+        } else {
+            Log.w(TAG, "Failed to bind to ClipboardService")
+        }
+    }
+
+    private fun updateConnectionStateFromService() {
+        val service = clipboardService ?: return
         viewModelScope.launch {
-            webSocketClient.connectionState.collectLatest { state ->
+            service.connectionState.collectLatest { state ->
                 _connectionState.value = state
-                when (state) {
-                    is ConnectionState.Connected -> {
-                        sendAuth()
-                    }
-                    is ConnectionState.Disconnected -> {
-                        heartbeatManager.stop()
-                    }
-                    else -> {}
-                }
             }
         }
-
         viewModelScope.launch {
-            webSocketClient.messages.collectLatest { message ->
-                handleWebSocketMessage(message)
+            service.syncStatus.collectLatest { status ->
+                _syncStatus.value = status
             }
         }
     }
@@ -124,40 +145,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             database.deviceDao().getAll().collectLatest { deviceList ->
                 _devices.value = deviceList
             }
-        }
-    }
-
-    private fun handleWebSocketMessage(json: String) {
-        val wsMessage = WsMessage.fromJson(json) ?: return
-
-        when (wsMessage.type) {
-            MessageType.AuthResponse -> handleAuthResponse(wsMessage.payload)
-            MessageType.HeartbeatAck -> { /* acknowledged */ }
-            MessageType.ClipboardSync -> Log.d(TAG, "Clipboard sync handled by ClipboardService")
-            MessageType.ClipboardHistory -> Log.d(TAG, "Clipboard history handled by ClipboardService")
-            MessageType.DeviceListResponse -> handleDeviceListResponse(wsMessage.payload)
-            MessageType.Error -> handleError(wsMessage.payload)
-            MessageType.Ping -> webSocketClient.send(WsMessageBuilder.pong())
-            else -> Log.d(TAG, "Unhandled: ${wsMessage.type}")
-        }
-    }
-
-    private fun handleAuthResponse(payload: JsonObject) {
-        val success = payload["success"]?.jsonPrimitive?.booleanOrNull ?: false
-        val deviceId = payload["device_id"]?.jsonPrimitive?.content
-        val message = payload["message"]?.jsonPrimitive?.content
-
-        if (success) {
-            Log.d(TAG, "Auth successful")
-            deviceId?.let {
-                viewModelScope.launch { settingsManager.setDeviceId(it) }
-            }
-            heartbeatManager.start()
-            setClipboardServiceRunning(true)
-            requestDeviceList()
-        } else {
-            Log.e(TAG, "Auth failed: $message")
-            _errorMessage.value = message ?: "Authentication failed"
         }
     }
 
@@ -208,7 +195,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         response.deviceId?.let { settingsManager.setDeviceId(it) }
                         _uiState.value = MainUiState.Authenticated
                         setClipboardServiceRunning(true)
-                        connectToServer()
                     } else {
                         _uiState.value = MainUiState.Unauthenticated
                         _errorMessage.value = response.message ?: response.error ?: "Login failed"
@@ -244,7 +230,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         response.deviceId?.let { settingsManager.setDeviceId(it) }
                         _uiState.value = MainUiState.Authenticated
                         setClipboardServiceRunning(true)
-                        connectToServer()
                     } else {
                         _uiState.value = MainUiState.Unauthenticated
                         _errorMessage.value = response.message ?: response.error ?: "Registration failed"
@@ -262,8 +247,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun logout() {
         viewModelScope.launch {
             clipboardMonitor.stop()
-            heartbeatManager.stop()
-            webSocketClient.disconnect()
             setClipboardServiceRunning(false)
             settingsManager.clearAll()
             _uiState.value = MainUiState.Unauthenticated
@@ -300,8 +283,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun requestDeviceList() {
-        if (!webSocketClient.isConnected()) return
-        webSocketClient.send(WsMessageBuilder.deviceList())
+        clipboardService?.requestDeviceList()
     }
 
     fun unregisterDevice(deviceId: String) {
@@ -324,25 +306,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _errorMessage.value = null
     }
 
-    private fun connectToServer() {
-        viewModelScope.launch {
-            val wsUrl = settingsManager.getServerUrl()
-            val httpUrl = settingsManager.getHttpUrl()
-            apiClient.baseUrl = httpUrl
-            webSocketClient.connect(wsUrl)
-        }
-    }
-
-    private fun sendAuth() {
-        viewModelScope.launch {
-            val token = settingsManager.getToken()
-            val deviceName = settingsManager.getDeviceName()
-            if (token.isNotEmpty()) {
-                webSocketClient.send(WsMessageBuilder.auth(token, deviceName))
-            }
-        }
-    }
-
     private fun setClipboardServiceRunning(enabled: Boolean) {
         val application = getApplication<Application>()
         val serviceIntent = Intent(application, ClipboardService::class.java)
@@ -360,8 +323,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         clipboardMonitor.stop()
-        heartbeatManager.destroy()
-        webSocketClient.destroy()
+        if (isBound) {
+            getApplication<Application>().unbindService(serviceConnection)
+            isBound = false
+        }
     }
 
     companion object {
