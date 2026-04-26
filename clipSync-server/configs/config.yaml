@@ -10,7 +10,7 @@ http_port: 8081
 db_path: ./data/clipsync.db
 
 # JWT secret key (CHANGE IN PRODUCTION)
-jwt_secret: "clipsync-secret-change-in-production"
+jwt_secret: "Zz6oTWHF014RQVnCyEkdIKhPxc2J7qaN3X5jpOMvfLsue8A9DYlrmtUbiBwgGS"
 
 # JWT token expiry in hours (720 = 30 days)
 jwt_expiry_hours: 720

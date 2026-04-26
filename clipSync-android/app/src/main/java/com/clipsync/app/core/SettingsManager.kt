@@ -31,8 +31,8 @@ class SettingsManager(private val context: Context) {
     private val ENCRYPTION_ENABLED_KEY = booleanPreferencesKey("encryption_enabled")
 
     // Default values
-    private val defaultWsUrl = "ws://10.0.2.2:8080"
-    private val defaultHttpUrl = "http://10.0.2.2:8081"
+    private val defaultWsUrl = "ws://8.141.100.238:8080"
+    private val defaultHttpUrl = "http://8.141.100.238:8081"
 
     // ─── Server URL ───
 

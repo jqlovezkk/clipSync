@@ -1,17 +1,26 @@
 # Android
-clipSync-android/.gradle/
-clipSync-android/build/
-clipSync-android/app/build/
+.gradle/
+**/build/
 clipSync-android/local.properties
-clipSync-android/*.hprof
+*.hprof
 
-# Go (Server)
+# Windows / .NET (WPF)
+**/bin/
+**/obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Go / Server
 clipSync-server/bin/
-clipSync-server/data/*.db
-clipSync-server/data/*.db-shm
-clipSync-server/data/*.db-wal
-clipSync-server/server.exe
-clipSync-server/clipsync-server.exe
+clipSync-server/data/
+server.exe
+clipsync-server.exe
+*.zip
+
+# Secrets & Config
+.clipsync_secret
 
 # IDEs
 .idea/

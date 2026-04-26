@@ -8,10 +8,10 @@ namespace ClipSync.WPF.Core
     public class AppSettings
     {
         [JsonProperty("server_url")]
-        public string ServerUrl { get; set; } = "ws://localhost:8080";
+        public string ServerUrl { get; set; } = "ws://8.141.100.238:8080";
 
         [JsonProperty("http_url")]
-        public string HttpUrl { get; set; } = "http://localhost:8081";
+        public string HttpUrl { get; set; } = "http://8.141.100.238:8081";
 
         [JsonProperty("username")]
         public string Username { get; set; } = "";
