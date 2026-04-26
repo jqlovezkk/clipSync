@@ -1,10 +1,13 @@
 package com.clipsync.app.ui.screens
 
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Computer
@@ -19,6 +22,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -28,10 +34,11 @@ import com.clipsync.app.data.entities.ClipboardHistoryItem
 import com.clipsync.app.data.entities.DeviceEntity
 import com.clipsync.app.network.ConnectionState
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 /**
  * WeChat-style main screen with bottom tab navigation.
- * Supports horizontal swipe gesture to switch tabs.
+ * Supports horizontal swipe gesture to switch tabs with optimized experience.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -61,15 +68,48 @@ fun MainScreenWithTabs(
     onLogout: () -> Unit,
     onClearError: () -> Unit
 ) {
+    val coroutineScope = rememberCoroutineScope()
+    
     val pagerState = rememberPagerState(
         initialPage = selectedTab,
         pageCount = { 4 }
     )
 
+    // Create custom fling behavior for smoother scrolling
+    val flingBehavior = PagerDefaults.flingBehavior(
+        state = pagerState,
+        snapAnimationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessLow
+        )
+    )
+
+    // Track current page with smooth offset for navigation bar animation
+    val currentPageForNavigation = remember {
+        derivedStateOf {
+            val currentPage = pagerState.currentPage
+            val offset = pagerState.currentPageOffsetFraction
+            // Only switch tab when swipe is more than 50% complete
+            if (offset > 0.5f && currentPage < 3) {
+                currentPage + 1
+            } else if (offset < -0.5f && currentPage > 0) {
+                currentPage - 1
+            } else {
+                currentPage
+            }
+        }
+    }
+
     // Sync pager state when selectedTab changes from external (e.g., button click)
     LaunchedEffect(selectedTab) {
         if (pagerState.currentPage != selectedTab) {
-            pagerState.animateScrollToPage(selectedTab)
+            pagerState.animateScrollToPage(
+                page = selectedTab,
+                animationSpec = tween(
+                    durationMillis = 300,
+                    easing = FastOutSlowInEasing
+                )
+            )
         }
     }
 
@@ -85,8 +125,17 @@ fun MainScreenWithTabs(
     Scaffold(
         bottomBar = {
             WeChatBottomNavigation(
-                selectedTab = selectedTab,
+                selectedTab = currentPageForNavigation.value,
                 onTabSelected = { newTab ->
+                    coroutineScope.launch {
+                        pagerState.animateScrollToPage(
+                            page = newTab,
+                            animationSpec = tween(
+                                durationMillis = 250,
+                                easing = FastOutSlowInEasing
+                            )
+                        )
+                    }
                     onTabSelected(newTab)
                 }
             )
@@ -99,7 +148,10 @@ fun MainScreenWithTabs(
         ) {
             HorizontalPager(
                 state = pagerState,
+                flingBehavior = flingBehavior,
                 userScrollEnabled = true,
+                beyondBoundsPageCount = 1, // Preload adjacent pages for smoother experience
+                pageSpacing = 0.dp,
                 modifier = Modifier.fillMaxSize()
             ) { page ->
                 when (page) {
