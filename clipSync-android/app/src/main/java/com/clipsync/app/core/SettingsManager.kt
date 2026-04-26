@@ -31,7 +31,7 @@ class SettingsManager(private val context: Context) {
     private val ENCRYPTION_ENABLED_KEY = booleanPreferencesKey("encryption_enabled")
 
     // Default values
-    private val defaultWsUrl = "ws://8.141.100.238:8080"
+    private val defaultWsUrl = "ws://8.141.100.238:8080/ws"
     private val defaultHttpUrl = "http://8.141.100.238:8081"
 
     // Old local IPs that should be migrated
@@ -40,13 +40,17 @@ class SettingsManager(private val context: Context) {
     // ─── Server URL ───
 
     val serverUrlFlow: Flow<String> = context.dataStore.data.map { prefs ->
-        val url = prefs[SERVER_URL_KEY] ?: defaultWsUrl
+        var url = prefs[SERVER_URL_KEY] ?: defaultWsUrl
         // Auto-migrate old local IPs to new public IP
         if (oldLocalIps.any { url.contains(it) }) {
-            url.replace(Regex("ws://[^/]+"), "ws://8.141.100.238")
-        } else {
-            url
+            url = url.replace(Regex("ws://[^/]+"), "ws://8.141.100.238:8080")
         }
+        
+        // Ensure /ws path is present
+        if (!url.endsWith("/ws")) {
+            url = if (url.endsWith("/")) "${url}ws" else "$url/ws"
+        }
+        url
     }
 
     suspend fun getServerUrl(): String = serverUrlFlow.first()
@@ -60,13 +64,12 @@ class SettingsManager(private val context: Context) {
     // ─── HTTP URL ───
 
     val httpUrlFlow: Flow<String> = context.dataStore.data.map { prefs ->
-        val url = prefs[HTTP_URL_KEY] ?: defaultHttpUrl
+        var url = prefs[HTTP_URL_KEY] ?: defaultHttpUrl
         // Auto-migrate old local IPs to new public IP
         if (oldLocalIps.any { url.contains(it) }) {
-            url.replace(Regex("http://[^/]+"), "http://8.141.100.238")
-        } else {
-            url
+            url = url.replace(Regex("http://[^/]+"), "http://8.141.100.238:8081")
         }
+        url
     }
 
     suspend fun getHttpUrl(): String = httpUrlFlow.first()

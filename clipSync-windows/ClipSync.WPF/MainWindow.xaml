@@ -10,7 +10,7 @@
         ResizeMode="CanResize">
     
     <WindowChrome.WindowChrome>
-        <WindowChrome CaptionHeight="32" GlassFrameThickness="0" CornerRadius="0"/>
+        <WindowChrome CaptionHeight="0" GlassFrameThickness="0" CornerRadius="0"/>
     </WindowChrome.WindowChrome>
     
     <Grid>
@@ -20,7 +20,12 @@
         </Grid.RowDefinitions>
 
         <!-- 顶部标题栏 -->
-        <Border Grid.Row="0" Background="{StaticResource SurfaceColor}" BorderBrush="{StaticResource BorderColor}" BorderThickness="0,0,0,1" Padding="20,12">
+        <Border Grid.Row="0"
+                Background="{StaticResource SurfaceColor}"
+                BorderBrush="{StaticResource BorderColor}"
+                BorderThickness="0,0,0,1"
+                Padding="20,12"
+                MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
@@ -36,7 +41,13 @@
                 </StackPanel>
 
                 <!-- 导航标签 -->
-                <TabControl x:Name="MainTabs" Grid.Column="1" HorizontalAlignment="Center" Background="Transparent" BorderThickness="0">
+                <TabControl x:Name="MainTabs"
+                            Grid.Column="1"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Margin="0,2,0,0">
                     <TabControl.Resources>
                         <Style TargetType="TabItem">
                             <Setter Property="Background" Value="Transparent"/>

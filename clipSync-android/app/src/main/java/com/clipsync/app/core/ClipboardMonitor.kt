@@ -103,14 +103,18 @@ class ClipboardMonitor(context: Context) {
      * This will NOT trigger the change listener (we track lastContent to avoid echo).
      */
     fun setTextToClipboard(text: String) {
-        try {
-            lastContent = text // Prevent echo loop
-            val clip = ClipData.newPlainText("ClipSync", text)
-            clipboardManager.setPrimaryClip(clip)
-            _currentText.value = text
-            Log.d(TAG, "Set clipboard text (${text.length} chars)")
-        } catch (e: SecurityException) {
-            Log.e(TAG, "Cannot set clipboard", e)
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try {
+                lastContent = text // Prevent echo loop
+                val clip = ClipData.newPlainText("ClipSync", text)
+                clipboardManager.setPrimaryClip(clip)
+                // Do not emit here: observers treat StateFlow changes as local user copies.
+                Log.d(TAG, "Set clipboard text (${text.length} chars)")
+            } catch (e: SecurityException) {
+                Log.e(TAG, "Cannot set clipboard", e)
+            } catch (e: Exception) {
+                Log.e(TAG, "Unexpected error setting clipboard text", e)
+            }
         }
     }
 
@@ -230,22 +234,24 @@ class ClipboardMonitor(context: Context) {
     /**
      * Set image to clipboard (from Base64).
      */
-    fun setImageToClipboard(base64Content: String, format: String = "image/png") {
-        try {
-            val imageBytes = Base64.decode(base64Content, Base64.NO_WRAP)
-            val bitmap = android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
-            if (bitmap == null) {
-                Log.e(TAG, "Failed to decode bitmap from base64")
-                return
-            }
+    fun setImageToClipboard(base64Content: String) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try {
+                val imageBytes = Base64.decode(base64Content, Base64.NO_WRAP)
+                val bitmap = android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+                if (bitmap == null) {
+                    Log.e(TAG, "Failed to decode bitmap from base64")
+                    return@post
+                }
 
-            lastImageChecksum = EncryptionHelper.computeChecksum(imageBytes)
-            val clip = ClipData.newPlainText("", "") // Placeholder, set actual image content
-            clipboardManager.setPrimaryClip(clip)
-            _currentImage.value = imageBytes
-            Log.d(TAG, "Set clipboard image (${imageBytes.size} bytes)")
-        } catch (e: Exception) {
-            Log.e(TAG, "Cannot set image to clipboard", e)
+                lastImageChecksum = EncryptionHelper.computeChecksum(imageBytes)
+                val clip = ClipData.newPlainText("", "") // Placeholder, set actual image content
+                clipboardManager.setPrimaryClip(clip)
+                // Do not emit here: observers treat StateFlow changes as local user copies.
+                Log.d(TAG, "Set clipboard image (${imageBytes.size} bytes)")
+            } catch (e: Exception) {
+                Log.e(TAG, "Cannot set image to clipboard", e)
+            }
         }
     }
 

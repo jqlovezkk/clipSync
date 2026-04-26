@@ -30,6 +30,13 @@ namespace ClipSync.WPF.Network
             _reconnectAttempts = 0;
         }
 
+        public void ResetAuthentication()
+        {
+            _isAuthenticated = false;
+            _reconnectAttempts = 0;
+            _reconnectCts?.Cancel();
+        }
+
         public void ScheduleReconnect()
         {
             if (!_isAuthenticated) return;

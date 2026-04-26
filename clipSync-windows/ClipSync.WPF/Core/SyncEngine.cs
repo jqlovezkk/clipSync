@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using ClipSync.WPF.Network;
+using Newtonsoft.Json.Linq;
 
 namespace ClipSync.WPF.Core
 {
@@ -33,6 +34,7 @@ namespace ClipSync.WPF.Core
         {
             if (_isStarted) return;
             _isStarted = true;
+            AppLogger.Info("SyncEngine", "同步引擎启动");
 
             _database = new Storage.LocalDatabase();
             await _database.InitializeAsync();
@@ -50,6 +52,7 @@ namespace ClipSync.WPF.Core
 
             if (!string.IsNullOrEmpty(_settingsManager.Settings.Token))
             {
+                AppLogger.Info("SyncEngine", "检测到本地已保存 Token，尝试自动连接并鉴权");
                 await ConnectAndAuthenticateAsync();
             }
 
@@ -58,6 +61,7 @@ namespace ClipSync.WPF.Core
 
         public async Task StopAsync()
         {
+            AppLogger.Info("SyncEngine", "同步引擎停止");
             _clipboardMonitor?.Stop();
             _heartbeatTimer?.Stop();
             _reconnectHandler?.Stop();
@@ -70,26 +74,47 @@ namespace ClipSync.WPF.Core
             }
         }
 
+        private async Task DisconnectSessionAsync()
+        {
+            AppLogger.Info("SyncEngine", "开始注销当前登录会话");
+            _heartbeatTimer?.Stop();
+            _reconnectHandler?.ResetAuthentication();
+
+            if (_webSocketClient != null)
+            {
+                await _webSocketClient.DisconnectAsync();
+            }
+
+            ConnectionStateChanged?.Invoke("disconnected");
+        }
+
         private async Task ConnectAndAuthenticateAsync()
         {
             if (_webSocketClient == null) return;
-
             var wsUrl = _settingsManager.Settings.ServerUrl;
             if (!wsUrl.StartsWith("ws://") && !wsUrl.StartsWith("wss://"))
             {
                 wsUrl = "ws://" + wsUrl;
             }
 
+            AppLogger.Info("SyncEngine", $"准备连接并鉴权: ws_url={wsUrl}, device_name={_settingsManager.Settings.DeviceName}");
+            ConnectionStateChanged?.Invoke("connecting");
             await _webSocketClient.ConnectAsync(wsUrl);
 
-            if (_webSocketClient.IsConnected)
+            if (!_webSocketClient.IsConnected)
             {
-                var authMessage = Protocol.CreateAuthMessage(
-                    _settingsManager.Settings.Token,
-                    _settingsManager.Settings.DeviceName,
-                    "windows");
-                await _webSocketClient.SendAsync(authMessage);
+                AppLogger.Warn("SyncEngine", $"WebSocket 连接失败，未能发送鉴权消息: ws_url={wsUrl}");
+                ErrorOccurred?.Invoke("WebSocket 连接失败，请检查服务器地址或网络");
+                ConnectionStateChanged?.Invoke("disconnected");
+                return;
             }
+
+            var authMessage = Protocol.CreateAuthMessage(
+                _settingsManager.Settings.Token,
+                _settingsManager.Settings.DeviceName,
+                "windows");
+            AppLogger.Info("SyncEngine", "WebSocket 已连接，开始发送鉴权消息");
+            await _webSocketClient.SendAsync(authMessage);
         }
 
         private async void OnLocalClipboardChanged(ClipboardChangedEventArgs args)
@@ -118,6 +143,11 @@ namespace ClipSync.WPF.Core
 
                 await SaveClipboardItemAsync(args, "local", _settingsManager.Settings.DeviceName);
             }
+            catch (InvalidOperationException ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SyncEngine] Clipboard push blocked: {ex.Message}");
+                ErrorOccurred?.Invoke(ex.Message);
+            }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[SyncEngine] Clipboard push error: {ex.Message}");
@@ -130,6 +160,7 @@ namespace ClipSync.WPF.Core
             {
                 var wsMessage = Protocol.Deserialize(message);
                 if (wsMessage == null) return;
+                AppLogger.Info("SyncEngine", $"收到 WebSocket 消息: type={wsMessage.Type}");
 
                 switch (wsMessage.Type)
                 {
@@ -156,17 +187,17 @@ namespace ClipSync.WPF.Core
                         break;
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Ignore malformed messages
+                AppLogger.Error("SyncEngine", "处理 WebSocket 消息失败", ex);
             }
         }
 
         private async Task HandleAuthResponse(WebSocketMessage message)
         {
-            var success = message.Payload?.Value<bool>("success") ?? false;
-            var deviceId = message.Payload?.Value<string>("device_id") ?? "";
-            var msg = message.Payload?.Value<string>("message") ?? "";
+            var success = GetBool(message.Payload, "success");
+            var deviceId = GetString(message.Payload, "device_id");
+            var msg = GetString(message.Payload, "message");
 
             if (success && !string.IsNullOrEmpty(deviceId))
             {
@@ -174,12 +205,14 @@ namespace ClipSync.WPF.Core
                 await _settingsManager.SaveAsync();
                 _heartbeatTimer?.Start();
                 _reconnectHandler?.OnAuthenticated();
+                AppLogger.Info("SyncEngine", $"WebSocket 鉴权成功: device_id={deviceId}");
                 ConnectionStateChanged?.Invoke("connected");
 
                 await RequestClipboardPullAsync();
             }
             else
             {
+                AppLogger.Warn("SyncEngine", $"WebSocket 鉴权失败: message={msg}");
                 ErrorOccurred?.Invoke($"Authentication failed: {msg}");
                 ConnectionStateChanged?.Invoke("auth_failed");
             }
@@ -189,15 +222,16 @@ namespace ClipSync.WPF.Core
         {
             if (!_settingsManager.Settings.SyncEnabled) return;
 
-            var sourceDeviceId = message.Payload?.Value<string>("source_device_id") ?? "";
-            var sourceDeviceName = message.Payload?.Value<string>("source_device_name") ?? "";
-            var contentType = message.Payload?.Value<string>("content_type") ?? "text";
-            var content = message.Payload?.Value<string>("content") ?? "";
-            var format = message.Payload?.Value<string>("format") ?? "";
-            var checksum = message.Payload?.Value<string>("checksum") ?? "";
-            var encrypted = message.Payload?.Value<bool>("encrypted");
+            var sourceDeviceId = GetString(message.Payload, "source_device_id");
+            var sourceDeviceName = GetString(message.Payload, "source_device_name", "Unknown device");
+            var contentType = GetString(message.Payload, "content_type", "text");
+            var content = GetString(message.Payload, "content");
+            var format = GetString(message.Payload, "format");
+            var checksum = GetString(message.Payload, "checksum");
+            var encrypted = GetNullableBool(message.Payload, "encrypted");
 
             if (string.IsNullOrEmpty(content) || string.IsNullOrEmpty(checksum)) return;
+            if (!string.IsNullOrEmpty(sourceDeviceId) && sourceDeviceId == _settingsManager.Settings.DeviceId) return;
 
             if (_clipboardMonitor != null)
             {
@@ -281,28 +315,42 @@ namespace ClipSync.WPF.Core
                 {
                     var device = new Network.Device
                     {
-                        DeviceId = deviceToken.Value<string>("device_id") ?? "",
-                        DeviceName = deviceToken.Value<string>("device_name") ?? "",
-                        Platform = deviceToken.Value<string>("platform") ?? "",
-                        LastSeen = deviceToken.Value<long>("last_seen"),
-                        IsOnline = deviceToken.Value<bool>("is_online")
+                        DeviceId = GetString(deviceToken, "device_id"),
+                        DeviceName = GetString(deviceToken, "device_name"),
+                        Platform = GetString(deviceToken, "platform"),
+                        LastSeen = GetLong(deviceToken, "last_seen"),
+                        IsOnline = GetBool(deviceToken, "is_online")
                     };
                     devices.Add(device);
                 }
             }
+            AppLogger.Info("SyncEngine", $"收到设备列表响应: count={devices.Count}");
             DeviceListUpdated?.Invoke(devices);
         }
 
         private void HandleErrorMessage(WebSocketMessage message)
         {
-            var code = message.Payload?.Value<string>("code") ?? "UNKNOWN";
-            var msg = message.Payload?.Value<string>("message") ?? "";
+            var code = GetString(message.Payload, "code", "UNKNOWN");
+            var msg = GetString(message.Payload, "message");
+            AppLogger.Warn("SyncEngine", $"收到服务端错误: code={code}, message={msg}");
+            if (code == "AUTH_FAILED")
+            {
+                ConnectionStateChanged?.Invoke("auth_failed");
+            }
             ErrorOccurred?.Invoke($"[{code}] {msg}");
         }
 
         private void OnConnectionStateChanged(bool isConnected)
         {
-            ConnectionStateChanged?.Invoke(isConnected ? "connected" : "disconnected");
+            if (isConnected)
+            {
+                AppLogger.Info("SyncEngine", "WebSocket 底层连接已建立，等待鉴权结果");
+                ConnectionStateChanged?.Invoke("connecting");
+                return;
+            }
+
+            AppLogger.Warn("SyncEngine", "WebSocket 底层连接已断开");
+            ConnectionStateChanged?.Invoke("disconnected");
             if (!isConnected)
             {
                 _reconnectHandler?.ScheduleReconnect();
@@ -312,12 +360,14 @@ namespace ClipSync.WPF.Core
         public async Task LoginAsync(string username, string password)
         {
             if (_httpClient == null) return;
+            AppLogger.Info("SyncEngine", $"开始执行登录: username={username}");
 
             var deviceName = _settingsManager.Settings.DeviceName;
             var result = await _httpClient.LoginAsync(username, password, deviceName, "windows");
 
             if (result.Success && !string.IsNullOrEmpty(result.Token))
             {
+                AppLogger.Info("SyncEngine", $"HTTP 登录成功，开始建立 WebSocket 鉴权: username={username}, device_id={result.DeviceId}");
                 _settingsManager.Update(s =>
                 {
                     s.Username = username;
@@ -330,6 +380,7 @@ namespace ClipSync.WPF.Core
             }
             else
             {
+                AppLogger.Warn("SyncEngine", $"HTTP 登录失败: username={username}, error={result.Error}");
                 ErrorOccurred?.Invoke(result.Error ?? "Login failed");
             }
         }
@@ -337,12 +388,14 @@ namespace ClipSync.WPF.Core
         public async Task RegisterAsync(string username, string password)
         {
             if (_httpClient == null) return;
+            AppLogger.Info("SyncEngine", $"开始执行注册: username={username}");
 
             var deviceName = _settingsManager.Settings.DeviceName;
             var result = await _httpClient.RegisterAsync(username, password, deviceName, "windows");
 
             if (result.Success && !string.IsNullOrEmpty(result.Token))
             {
+                AppLogger.Info("SyncEngine", $"HTTP 注册成功，开始建立 WebSocket 鉴权: username={username}, device_id={result.DeviceId}");
                 _settingsManager.Update(s =>
                 {
                     s.Username = username;
@@ -355,13 +408,14 @@ namespace ClipSync.WPF.Core
             }
             else
             {
+                AppLogger.Warn("SyncEngine", $"HTTP 注册失败: username={username}, error={result.Error}");
                 ErrorOccurred?.Invoke(result.Error ?? "Registration failed");
             }
         }
 
         public async Task LogoutAsync()
         {
-            await StopAsync();
+            await DisconnectSessionAsync();
             _settingsManager.Update(s =>
             {
                 s.Token = "";
@@ -408,6 +462,54 @@ namespace ClipSync.WPF.Core
             };
 
             await _database.InsertClipboardItemAsync(item);
+        }
+
+        private static string GetString(JToken? token, string key, string defaultValue = "")
+        {
+            try
+            {
+                return token?[key]?.Value<string>() ?? defaultValue;
+            }
+            catch
+            {
+                return defaultValue;
+            }
+        }
+
+        private static bool GetBool(JToken? token, string key, bool defaultValue = false)
+        {
+            try
+            {
+                return token?[key]?.Value<bool>() ?? defaultValue;
+            }
+            catch
+            {
+                return defaultValue;
+            }
+        }
+
+        private static bool? GetNullableBool(JToken? token, string key)
+        {
+            try
+            {
+                return token?[key]?.Value<bool?>();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static long GetLong(JToken? token, string key, long defaultValue = 0)
+        {
+            try
+            {
+                return token?[key]?.Value<long>() ?? defaultValue;
+            }
+            catch
+            {
+                return defaultValue;
+            }
         }
 
         public void Dispose()

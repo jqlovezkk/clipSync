@@ -9,13 +9,10 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
-import com.clipsync.app.R
 import com.clipsync.app.core.ClipboardContentType
 import com.clipsync.app.core.ClipboardMonitor
-import com.clipsync.app.core.EncryptionHelper
 import com.clipsync.app.core.SettingsManager
 import com.clipsync.app.core.SyncEngine
-import com.clipsync.app.core.SyncStatus
 import com.clipsync.app.data.AppDatabase
 import com.clipsync.app.network.ConnectionState
 import com.clipsync.app.network.HeartbeatManager
@@ -72,10 +69,15 @@ class ClipboardService : Service() {
         // 启动前台服务通知，Android 14+ 需要与 Manifest 中声明的服务类型一致
         createNotificationChannel()
         Log.d(TAG, "Starting foreground service with type=dataSync")
-        startForeground(NOTIFICATION_ID, buildNotification())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, buildNotification(), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification())
+        }
 
         // Setup WebSocket message handling
         setupMessageHandler()
+        observeConnectionState()
 
         // Setup clipboard change monitoring
         setupClipboardMonitoring()
@@ -124,8 +126,8 @@ class ClipboardService : Service() {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
         }.apply {
-            setContentTitle(getString(R.string.notification_service_title))
-            setContentText(getString(R.string.notification_service_text))
+            setContentTitle("ClipSync Running")
+            setContentText("Monitoring clipboard for sync")
             setSmallIcon(android.R.drawable.ic_menu_send)
             setOngoing(true)
         }.build()
@@ -135,14 +137,36 @@ class ClipboardService : Service() {
         serviceScope.launch {
             val wsUrl = settingsManager.getServerUrl()
             val token = settingsManager.getToken()
-            val deviceName = settingsManager.getDeviceName()
 
             if (token.isEmpty()) {
                 Log.w(TAG, "No token available, cannot connect")
                 return@launch
             }
 
+            Log.d(TAG, "Connecting service WebSocket to $wsUrl")
             webSocketClient.connect(wsUrl)
+        }
+    }
+
+    private fun observeConnectionState() {
+        serviceScope.launch {
+            webSocketClient.connectionState.collectLatest { state ->
+                when (state) {
+                    ConnectionState.Connected -> {
+                        Log.d(TAG, "Service WebSocket connected, sending auth")
+                        sendAuth()
+                    }
+                    ConnectionState.Connecting -> {
+                        Log.d(TAG, "Service WebSocket connecting")
+                    }
+                    ConnectionState.Disconnected -> {
+                        Log.d(TAG, "Service WebSocket disconnected")
+                    }
+                    is ConnectionState.Error -> {
+                        Log.e(TAG, "Service WebSocket error: ${state.message}")
+                    }
+                }
+            }
         }
     }
 
@@ -155,7 +179,11 @@ class ClipboardService : Service() {
     }
 
     private fun handleWebSocketMessage(json: String) {
-        val wsMessage = WsMessage.fromJson(json) ?: return
+        val wsMessage = WsMessage.fromJson(json)
+        if (wsMessage == null) {
+            Log.w(TAG, "Failed to parse WebSocket message: ${json.take(200)}")
+            return
+        }
 
         when (wsMessage.type) {
             MessageType.AuthResponse -> handleAuthResponse(wsMessage.payload)
@@ -198,7 +226,7 @@ class ClipboardService : Service() {
 
     private fun handleDeviceListResponse(payload: JsonObject) {
         // Device list handling can be extended here
-        Log.d(TAG, "Device list received")
+        Log.d(TAG, "Device list received: $payload")
     }
 
     private fun handleError(payload: JsonObject) {
@@ -262,8 +290,13 @@ class ClipboardService : Service() {
             val token = settingsManager.getToken()
             val deviceName = settingsManager.getDeviceName()
             if (token.isNotEmpty()) {
+                Log.d(TAG, "Sending auth for device=$deviceName")
                 val message = WsMessageBuilder.auth(token, deviceName)
-                webSocketClient.send(message)
+                if (!webSocketClient.send(message)) {
+                    Log.w(TAG, "Failed to send auth message")
+                }
+            } else {
+                Log.w(TAG, "Skipping auth send because token is empty")
             }
         }
     }

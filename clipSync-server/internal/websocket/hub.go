@@ -65,8 +65,7 @@ func (h *Hub) Run() {
 			h.mu.Lock()
 			h.clients[client.ID] = client
 			h.mu.Unlock()
-			h.incrementCount()
-			log.Printf("[WS] Client connected: %s (%s) - Total: %d", client.DeviceName, client.Platform, h.ClientCount())
+			log.Printf("[WS] Client registered: %s (%s) - Total: %d", client.DeviceName, client.Platform, h.ClientCount())
 
 		case client := <-h.unregister:
 			h.mu.Lock()
@@ -76,11 +75,11 @@ func (h *Hub) Run() {
 			}
 			h.mu.Unlock()
 			h.decrementCount()
-			log.Printf("[WS] Client disconnected: %s - Total: %d", client.DeviceName, h.ClientCount())
+			log.Printf("[WS] Client unregistered: %s - Total: %d", client.DeviceName, h.ClientCount())
 
 		case msg := <-h.broadcast:
 			h.mu.RLock()
-			var disconnected []*Client
+			var fullBufferClients []*Client
 			for _, client := range h.clients {
 				if client.UserID != msg.UserID {
 					continue
@@ -92,18 +91,18 @@ func (h *Hub) Run() {
 				case client.Send <- msg.Data:
 				default:
 					// Client send buffer full, mark for disconnect
-					disconnected = append(disconnected, client)
+					fullBufferClients = append(fullBufferClients, client)
 				}
 			}
 			h.mu.RUnlock()
 
 			// Disconnect clients with full buffers outside of read lock
-			for _, client := range disconnected {
+			// Only close connection; the readPump defer will handle unregister + decrementCount
+			for _, client := range fullBufferClients {
 				h.mu.Lock()
 				if _, ok := h.clients[client.ID]; ok {
 					delete(h.clients, client.ID)
 					close(client.Send)
-					h.decrementCount()
 				}
 				h.mu.Unlock()
 			}
@@ -193,6 +192,10 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request, upgrader w
 		Hub:      h,
 		LastSeen: time.Now(),
 	}
+
+	// Count client as soon as connection is established
+	h.incrementCount()
+	log.Printf("[WS] New connection: %s - Total: %d", client.ID, h.ClientCount())
 
 	// Set auth timeout: disconnect if not authenticated within 30 seconds
 	client.authTimer = time.AfterFunc(30*time.Second, func() {

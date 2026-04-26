@@ -16,19 +16,19 @@ namespace ClipSync.WPF
             // Global exception handlers to prevent crashes
             DispatcherUnhandledException += (sender, args) =>
             {
-                System.Diagnostics.Debug.WriteLine($"[App] Unhandled exception: {args.Exception.Message}");
+                Core.AppLogger.Error("App", "发生未处理的 UI 线程异常", args.Exception);
                 args.Handled = true;
             };
 
             AppDomain.CurrentDomain.UnhandledException += (sender, args) =>
             {
                 var ex = args.ExceptionObject as Exception;
-                System.Diagnostics.Debug.WriteLine($"[App] Domain exception: {ex?.Message}");
+                Core.AppLogger.Error("App", "发生未处理的应用程序域异常", ex);
             };
 
             System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (sender, args) =>
             {
-                System.Diagnostics.Debug.WriteLine($"[App] Unobserved task exception: {args.Exception.Message}");
+                Core.AppLogger.Error("App", "发生未观察到的任务异常", args.Exception);
                 args.SetObserved();
             };
 

@@ -2,6 +2,8 @@ package com.clipsync.app.network
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -26,11 +28,11 @@ data class WsMessage(
     @SerialName("device_id") val deviceId: String? = null,
     val payload: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.buildJsonObject { }
 ) {
-    fun toJson(): String = ProtocolJson.encodeToString(WsMessage.serializer(), this)
+    fun toJson(): String = ProtocolJson.encodeToString(this)
 
     companion object {
         fun fromJson(json: String): WsMessage? =
-            runCatching { ProtocolJson.decodeFromString(WsMessage.serializer(), json) }.getOrNull()
+            runCatching { ProtocolJson.decodeFromString<WsMessage>(json) }.getOrNull()
     }
 }
 
@@ -193,7 +195,8 @@ data class AuthResponse(
     val token: String? = null,
     @SerialName("device_id") val deviceId: String? = null,
     @SerialName("expires_at") val expiresAt: Long? = null,
-    val error: String? = null
+    val error: String? = null,
+    val message: String? = null
 )
 
 @Serializable

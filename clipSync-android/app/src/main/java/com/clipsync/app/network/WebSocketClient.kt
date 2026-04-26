@@ -96,6 +96,7 @@ class WebSocketClient {
             return
         }
 
+        reconnectHandler.trackConnection(url)
         _connectionState.value = ConnectionState.Connecting
         Log.d(TAG, "Connecting to $url")
 

@@ -90,8 +90,10 @@ func (c *Client) handleAuth(msg protocol.WSMessage) {
 		c.Platform = authPayload.Platform
 	}
 
-	// Register with hub
-	c.Hub.register <- c
+	// Register with hub (use goroutine to avoid blocking auth response)
+	go func() {
+		c.Hub.register <- c
+	}()
 
 	// Send auth response
 	c.sendJSON(protocol.WSMessage{

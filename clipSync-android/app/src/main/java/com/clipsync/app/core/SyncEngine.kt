@@ -20,7 +20,6 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
-import kotlinx.serialization.json.int
 
 /**
  * Orchestrates clipboard sync between local clipboard and remote server.
@@ -120,10 +119,10 @@ class SyncEngine(
             val estimatedSize = contentToSend.length
 
             val message = WsMessageBuilder.clipboardPush(
-                "text",
-                contentToSend,
-                checksum,
-                estimatedSize
+                contentType = "text",
+                content = contentToSend,
+                checksum = checksum,
+                size = estimatedSize
             )
 
             val deviceId = settingsManager.getDeviceId()
@@ -133,7 +132,7 @@ class SyncEngine(
             if (sent) {
                 Log.d(TAG, "Pushed text to server (${content.length} chars)")
                 // Save to local history
-                saveToHistory(content, "text", checksum, deviceId, format = "text/plain")
+                saveToHistory(content, "text", checksum, deviceId)
             } else {
                 Log.w(TAG, "Failed to push to server")
             }
@@ -183,11 +182,11 @@ class SyncEngine(
             }
 
             val message = WsMessageBuilder.clipboardPush(
-                "image",
-                contentToSend,
-                checksum,
-                size,
-                format
+                contentType = "image",
+                content = contentToSend,
+                checksum = checksum,
+                size = size,
+                format = format
             )
 
             val deviceId = settingsManager.getDeviceId()
@@ -196,7 +195,7 @@ class SyncEngine(
             val sent = webSocketClient.send(messageWithDevice)
             if (sent) {
                 Log.d(TAG, "Pushed image to server ($size bytes, format=$format)")
-                saveToHistory(imageBase64, "image", checksum, deviceId, format = format)
+                saveToHistory(imageBase64, "image", checksum, deviceId)
             } else {
                 Log.w(TAG, "Failed to push image to server")
             }
@@ -208,51 +207,76 @@ class SyncEngine(
      */
     fun handleIncomingSync(payload: JsonObject) {
         scope.launch {
-            if (isDestroyed) return@launch
-            val content = payload["content"]?.jsonPrimitive?.content ?: return@launch
-            val contentType = payload["content_type"]?.jsonPrimitive?.content ?: "text"
-            val sourceDeviceId = payload["source_device_id"]?.jsonPrimitive?.content ?: ""
-            val sourceDeviceName = payload["source_device_name"]?.jsonPrimitive?.content ?: ""
-            val encrypted = payload["encrypted"]?.jsonPrimitive?.booleanOrNull ?: false
-            val checksum = payload["checksum"]?.jsonPrimitive?.content ?: ""
-            val format = payload["format"]?.jsonPrimitive?.content ?: "text/plain"
+            try {
+                if (isDestroyed) return@launch
 
-            // Skip if this content originated from this device (avoid echo loop)
-            val myDeviceId = settingsManager.getDeviceId()
-            if (sourceDeviceId == myDeviceId) {
-                Log.d(TAG, "Skipping own content (echo prevention)")
-                return@launch
-            }
-
-            val encryptionEnabled = settingsManager.isEncryptionEnabled()
-            val decryptedContent = if (encrypted && encryptionEnabled) {
-                EncryptionHelper.decryptWithSalt(content) ?: run {
-                    Log.e(TAG, "Failed to decrypt content")
+                val content = payload.safeString("content")
+                if (content.isNullOrEmpty()) {
+                    Log.w(TAG, "Ignoring clipboard sync with empty content: $payload")
                     return@launch
                 }
-            } else {
-                content
-            }
 
-            when (contentType) {
-                "text" -> {
-                    // Set to clipboard (this won't trigger a push due to echo prevention)
-                    clipboardMonitor.setTextToClipboard(decryptedContent)
-                    Log.d(TAG, "Synced text from $sourceDeviceName: ${decryptedContent.take(50)}...")
-                }
-                "image" -> {
-                    // Set image to clipboard
-                    clipboardMonitor.setImageToClipboard(decryptedContent, format)
-                    Log.d(TAG, "Synced image from $sourceDeviceName (${decryptedContent.length} chars base64)")
-                }
-                else -> {
-                    Log.w(TAG, "Unknown content type: $contentType")
+                val contentType = payload.safeString("content_type") ?: "text"
+                val sourceDeviceId = payload.safeString("source_device_id").orEmpty()
+                val sourceDeviceName = payload.safeString("source_device_name")
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "Unknown device"
+                val encrypted = payload.safeBoolean("encrypted") ?: false
+
+                // Skip if this content originated from this device (avoid echo loop)
+                val myDeviceId = settingsManager.getDeviceId()
+                if (sourceDeviceId.isNotEmpty() && sourceDeviceId == myDeviceId) {
+                    Log.d(TAG, "Skipping own content (echo prevention)")
                     return@launch
                 }
-            }
 
-            // Save to local history
-            saveToHistory(decryptedContent, contentType, checksum, sourceDeviceId, sourceDeviceName, format)
+                val encryptionEnabled = settingsManager.isEncryptionEnabled()
+                if (encrypted && !encryptionEnabled) {
+                    Log.w(TAG, "Encrypted clipboard sync received but encryption is disabled locally")
+                    _syncStatus.value = SyncStatus.Error("无法解密远端剪贴板内容")
+                    return@launch
+                }
+
+                val decryptedContent = if (encrypted) {
+                    try {
+                        EncryptionHelper.decryptWithSalt(content) ?: run {
+                            Log.e(TAG, "Failed to decrypt content")
+                            _syncStatus.value = SyncStatus.Error("解密远端剪贴板内容失败")
+                            return@launch
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Unexpected decryption error", e)
+                        _syncStatus.value = SyncStatus.Error("解密远端剪贴板内容失败")
+                        return@launch
+                    }
+                } else {
+                    content
+                }
+
+                val checksum = payload.safeString("checksum")
+                    ?.takeIf { it.isNotBlank() }
+                    ?: EncryptionHelper.calculateChecksum(decryptedContent)
+
+                when (contentType) {
+                    "text" -> {
+                        clipboardMonitor.setTextToClipboard(decryptedContent)
+                        Log.d(TAG, "Synced text from $sourceDeviceName: ${decryptedContent.take(50)}...")
+                    }
+                    "image" -> {
+                        clipboardMonitor.setImageToClipboard(decryptedContent)
+                        Log.d(TAG, "Synced image from $sourceDeviceName (${decryptedContent.length} chars base64)")
+                    }
+                    else -> {
+                        Log.w(TAG, "Unknown content type in clipboard sync: $contentType, payload=$payload")
+                        return@launch
+                    }
+                }
+
+                saveToHistory(decryptedContent, contentType, checksum, sourceDeviceId, sourceDeviceName)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to handle incoming clipboard sync: $payload", e)
+                _syncStatus.value = SyncStatus.Error("处理远端剪贴板同步失败")
+            }
         }
     }
 
@@ -265,7 +289,6 @@ class SyncEngine(
             val itemsArray = payload["items"]
             if (itemsArray !is JsonArray) return@launch
 
-            val myDeviceId = settingsManager.getDeviceId()
             val items = itemsArray.jsonArray.mapNotNull { item ->
                 val obj = item as? JsonObject ?: return@mapNotNull null
                 val content = obj["content"]?.jsonPrimitive?.content ?: return@mapNotNull null
@@ -310,8 +333,7 @@ class SyncEngine(
         contentType: String,
         checksum: String,
         sourceDeviceId: String,
-        sourceDeviceName: String = "",
-        format: String = "text/plain"
+        sourceDeviceName: String = ""
     ) {
         scope.launch {
             // Skip saving if content is too large
@@ -353,6 +375,12 @@ class SyncEngine(
         private const val TAG = "SyncEngine"
     }
 }
+
+private fun JsonObject.safeString(key: String): String? =
+    runCatching { this[key]?.jsonPrimitive?.content }.getOrNull()
+
+private fun JsonObject.safeBoolean(key: String): Boolean? =
+    runCatching { this[key]?.jsonPrimitive?.booleanOrNull }.getOrNull()
 
 /**
  * Sync status sealed class.

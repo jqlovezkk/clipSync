@@ -1,9 +1,5 @@
 package com.clipsync.app.ui.screens
 
-import android.graphics.BitmapFactory
-import android.util.Base64
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,19 +25,17 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.clipsync.app.data.entities.ClipboardEntity
+import com.clipsync.app.data.entities.ClipboardHistoryItem
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(
-    history: List<ClipboardEntity>,
-    onCopy: (String) -> Unit,
+    history: List<ClipboardHistoryItem>,
+    onCopy: (Int) -> Unit,
     onClearHistory: () -> Unit
 ) {
     Scaffold(
@@ -81,7 +75,7 @@ fun HistoryScreen(
                 items(history, key = { it.id }) { item ->
                     HistoryItem(
                         entity = item,
-                        onCopy = { onCopy(item.content) }
+                        onCopy = { onCopy(item.id) }
                     )
                     Divider()
                 }
@@ -92,7 +86,7 @@ fun HistoryScreen(
 
 @Composable
 private fun HistoryItem(
-    entity: ClipboardEntity,
+    entity: ClipboardHistoryItem,
     onCopy: () -> Unit
 ) {
     Card(
@@ -113,10 +107,10 @@ private fun HistoryItem(
                 Column(modifier = Modifier.weight(1f)) {
                     // Show image preview or text content
                     if (entity.contentType == "image") {
-                        ImagePreview(base64Content = entity.content)
+                        ImagePlaceholder(contentSize = entity.contentSize)
                     } else {
                         Text(
-                            text = entity.content,
+                            text = entity.previewContent,
                             style = MaterialTheme.typography.bodyMedium,
                             maxLines = 3,
                             overflow = TextOverflow.Ellipsis
@@ -160,42 +154,23 @@ private fun HistoryItem(
 }
 
 @Composable
-private fun ImagePreview(base64Content: String) {
-    val bitmap = remember(base64Content) {
-        try {
-            val imageBytes = Base64.decode(base64Content, Base64.NO_WRAP)
-            BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)?.asImageBitmap()
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    if (bitmap != null) {
-        Image(
-            bitmap = bitmap,
-            contentDescription = "Clipboard image",
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(120.dp)
+private fun ImagePlaceholder(contentSize: Int) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(vertical = 8.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Default.Image,
+            contentDescription = "Image placeholder",
+            modifier = Modifier.size(24.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
-    } else {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(vertical = 8.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.Image,
-                contentDescription = "Image placeholder",
-                modifier = Modifier.size(24.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.padding(8.dp))
-            Text(
-                text = "Image (preview unavailable)",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        Spacer(modifier = Modifier.padding(8.dp))
+        Text(
+            text = "图片内容 (${formatSize(contentSize)})",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -207,4 +182,17 @@ private fun formatTimestamp(timestamp: Long): String {
         diff < 86_400_000 -> "${diff / 3_600_000}h ago"
         else -> "${diff / 86_400_000}d ago"
     }
+}
+
+private fun formatSize(bytes: Int): String {
+    if (bytes <= 0) {
+        return "0 B"
+    }
+    if (bytes < 1024) {
+        return "$bytes B"
+    }
+    if (bytes < 1024 * 1024) {
+        return "${bytes / 1024} KB"
+    }
+    return String.format("%.1f MB", bytes / 1024f / 1024f)
 }

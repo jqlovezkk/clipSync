@@ -47,12 +47,14 @@ namespace ClipSync.WPF.Network
 
             try
             {
+                AppLogger.Info("HttpClient", $"开始登录请求: url={url}, username={username}, device_name={deviceName}, platform={platform}");
                 var response = await _httpClient.PostAsync(url, content);
                 var responseJson = await response.Content.ReadAsStringAsync();
 
                 if (response.IsSuccessStatusCode)
                 {
                     var result = JObject.Parse(responseJson);
+                    AppLogger.Info("HttpClient", $"登录请求成功: username={username}, device_id={result.Value<string>("device_id")}");
                     return new AuthResult
                     {
                         Success = true,
@@ -64,6 +66,7 @@ namespace ClipSync.WPF.Network
                 else
                 {
                     var error = JObject.Parse(responseJson);
+                    AppLogger.Warn("HttpClient", $"登录请求失败: status={(int)response.StatusCode}, error={error.Value<string>("error")}");
                     return new AuthResult
                     {
                         Success = false,
@@ -73,6 +76,7 @@ namespace ClipSync.WPF.Network
             }
             catch (Exception ex)
             {
+                AppLogger.Error("HttpClient", $"登录请求异常: username={username}, url={url}", ex);
                 return new AuthResult
                 {
                     Success = false,
@@ -99,12 +103,14 @@ namespace ClipSync.WPF.Network
 
             try
             {
+                AppLogger.Info("HttpClient", $"开始注册请求: url={url}, username={username}, device_name={deviceName}, platform={platform}");
                 var response = await _httpClient.PostAsync(url, content);
                 var responseJson = await response.Content.ReadAsStringAsync();
 
                 if (response.IsSuccessStatusCode)
                 {
                     var result = JObject.Parse(responseJson);
+                    AppLogger.Info("HttpClient", $"注册请求成功: username={username}, device_id={result.Value<string>("device_id")}");
                     return new AuthResult
                     {
                         Success = true,
@@ -116,6 +122,7 @@ namespace ClipSync.WPF.Network
                 else
                 {
                     var error = JObject.Parse(responseJson);
+                    AppLogger.Warn("HttpClient", $"注册请求失败: status={(int)response.StatusCode}, error={error.Value<string>("error")}");
                     return new AuthResult
                     {
                         Success = false,
@@ -125,6 +132,7 @@ namespace ClipSync.WPF.Network
             }
             catch (Exception ex)
             {
+                AppLogger.Error("HttpClient", $"注册请求异常: username={username}, url={url}", ex);
                 return new AuthResult
                 {
                     Success = false,
@@ -144,12 +152,14 @@ namespace ClipSync.WPF.Network
 
             try
             {
+                AppLogger.Info("HttpClient", $"开始刷新 Token: url={url}");
                 var response = await _httpClient.SendAsync(request);
                 var responseJson = await response.Content.ReadAsStringAsync();
 
                 if (response.IsSuccessStatusCode)
                 {
                     var result = JObject.Parse(responseJson);
+                    AppLogger.Info("HttpClient", "刷新 Token 成功");
                     return new AuthResult
                     {
                         Success = true,
@@ -159,6 +169,7 @@ namespace ClipSync.WPF.Network
                 }
                 else
                 {
+                    AppLogger.Warn("HttpClient", $"刷新 Token 失败: status={(int)response.StatusCode}");
                     return new AuthResult
                     {
                         Success = false,
@@ -168,6 +179,7 @@ namespace ClipSync.WPF.Network
             }
             catch (Exception ex)
             {
+                AppLogger.Error("HttpClient", $"刷新 Token 异常: url={url}", ex);
                 return new AuthResult
                 {
                     Success = false,

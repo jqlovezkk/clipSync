@@ -34,6 +34,8 @@ type Client struct {
 func (c *Client) readPump() {
 	defer func() {
 		c.Hub.unregister <- c
+		c.Hub.decrementCount()
+		log.Printf("[WS] Connection closed: %s - Total: %d", c.ID, c.Hub.ClientCount())
 		c.Conn.Close()
 	}()
 

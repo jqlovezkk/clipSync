@@ -4,6 +4,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using ClipSync.WPF.Core;
 
 namespace ClipSync.WPF.Network
 {
@@ -12,6 +13,7 @@ namespace ClipSync.WPF.Network
         private ClientWebSocket? _webSocket;
         private CancellationTokenSource? _receiveCts;
         private bool _isDisposed;
+        private int _connectionVersion;
         private const int MaxMessageSize = 10 * 1024 * 1024; // 10MB max message
 
         public bool IsConnected => _webSocket?.State == WebSocketState.Open;
@@ -21,7 +23,9 @@ namespace ClipSync.WPF.Network
 
         public async Task ConnectAsync(string url)
         {
-            await DisconnectAsync();
+            var connectionVersion = Interlocked.Increment(ref _connectionVersion);
+            AppLogger.Info("WebSocketClient", $"开始连接 WebSocket: {url}");
+            await DisconnectAsync(notifyStateChange: false);
 
             _webSocket = new ClientWebSocket();
             _receiveCts = new CancellationTokenSource();
@@ -29,17 +33,27 @@ namespace ClipSync.WPF.Network
             try
             {
                 await _webSocket.ConnectAsync(new Uri(url), _receiveCts.Token);
+                AppLogger.Info("WebSocketClient", $"WebSocket 连接成功: {url}");
                 ConnectionStateChanged?.Invoke(true);
-                _ = Task.Run(() => ReceiveLoop(_receiveCts.Token), _receiveCts.Token);
+                _ = Task.Run(() => ReceiveLoop(_receiveCts.Token, connectionVersion), _receiveCts.Token);
             }
-            catch
+            catch (Exception ex)
             {
-                ConnectionStateChanged?.Invoke(false);
+                AppLogger.Error("WebSocketClient", $"WebSocket 连接失败: {url}", ex);
+                if (connectionVersion == Volatile.Read(ref _connectionVersion))
+                {
+                    ConnectionStateChanged?.Invoke(false);
+                }
             }
         }
 
-        public async Task DisconnectAsync()
+        public async Task DisconnectAsync(bool notifyStateChange = true)
         {
+            var wasConnected = _webSocket?.State == WebSocketState.Open;
+            if (wasConnected)
+            {
+                AppLogger.Info("WebSocketClient", "开始断开 WebSocket 连接");
+            }
             _receiveCts?.Cancel();
 
             if (_webSocket != null && _webSocket.State == WebSocketState.Open)
@@ -58,7 +72,11 @@ namespace ClipSync.WPF.Network
             _webSocket = null;
             _receiveCts?.Dispose();
             _receiveCts = null;
-            ConnectionStateChanged?.Invoke(false);
+            if (notifyStateChange && wasConnected)
+            {
+                AppLogger.Info("WebSocketClient", "WebSocket 已断开");
+                ConnectionStateChanged?.Invoke(false);
+            }
         }
 
         public async Task SendAsync(string message)
@@ -74,13 +92,14 @@ namespace ClipSync.WPF.Network
                     true,
                     CancellationToken.None);
             }
-            catch
+            catch (Exception ex)
             {
                 // Send failed, connection likely dropped
+                AppLogger.Error("WebSocketClient", "发送 WebSocket 消息失败", ex);
             }
         }
 
-        private async Task ReceiveLoop(CancellationToken cancellationToken)
+        private async Task ReceiveLoop(CancellationToken cancellationToken, int connectionVersion)
         {
             if (_webSocket == null) return;
 
@@ -125,13 +144,19 @@ namespace ClipSync.WPF.Network
             {
                 // Expected on disconnect
             }
-            catch
+            catch (Exception ex)
             {
                 // Connection error
+                AppLogger.Error("WebSocketClient", "接收 WebSocket 消息失败", ex);
             }
             finally
             {
-                ConnectionStateChanged?.Invoke(false);
+                if (connectionVersion == Volatile.Read(ref _connectionVersion) &&
+                    (_webSocket == null || _webSocket.State != WebSocketState.Open))
+                {
+                    AppLogger.Warn("WebSocketClient", "WebSocket 接收循环结束，连接状态变为已断开");
+                    ConnectionStateChanged?.Invoke(false);
+                }
             }
         }
 

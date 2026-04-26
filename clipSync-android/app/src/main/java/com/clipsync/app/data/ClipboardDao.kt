@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import com.clipsync.app.data.entities.ClipboardEntity
+import com.clipsync.app.data.entities.ClipboardHistoryItem
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -13,11 +14,32 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface ClipboardDao {
 
-    @Query("SELECT * FROM clipboard_history ORDER BY createdAt DESC")
-    fun getAll(): Flow<List<ClipboardEntity>>
+    @Query(
+        """
+        SELECT 
+            id,
+            CASE
+                WHEN contentType = 'image' THEN ''
+                ELSE substr(content, 1, 2048)
+            END AS previewContent,
+            contentType,
+            checksum,
+            sourceDeviceId,
+            sourceDeviceName,
+            createdAt,
+            length(content) AS contentSize
+        FROM clipboard_history
+        ORDER BY createdAt DESC
+        LIMIT :limit
+        """
+    )
+    fun getHistorySummaries(limit: Int = 50): Flow<List<ClipboardHistoryItem>>
 
     @Query("SELECT * FROM clipboard_history ORDER BY createdAt DESC LIMIT :limit")
     suspend fun getRecent(limit: Int = 50): List<ClipboardEntity>
+
+    @Query("SELECT * FROM clipboard_history WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Int): ClipboardEntity?
 
     @Query("SELECT * FROM clipboard_history WHERE checksum = :checksum LIMIT 1")
     suspend fun getByChecksum(checksum: String): ClipboardEntity?

@@ -1,31 +1,29 @@
 package com.clipsync.app.viewmodel
 
 import android.app.Application
+import android.content.Intent
+import android.os.Build
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.clipsync.app.core.ClipboardMonitor
-import com.clipsync.app.core.EncryptionHelper
 import com.clipsync.app.core.SettingsManager
-import com.clipsync.app.core.SyncEngine
 import com.clipsync.app.core.SyncStatus
 import com.clipsync.app.data.AppDatabase
-import com.clipsync.app.data.entities.ClipboardEntity
+import com.clipsync.app.data.entities.ClipboardHistoryItem
 import com.clipsync.app.data.entities.DeviceEntity
 import com.clipsync.app.network.ApiClient
-import com.clipsync.app.network.AuthResponse
 import com.clipsync.app.network.ConnectionState
-import com.clipsync.app.network.DeviceListResponse
 import com.clipsync.app.network.HeartbeatManager
 import com.clipsync.app.network.MessageType
 import com.clipsync.app.network.WebSocketClient
 import com.clipsync.app.network.WsMessage
 import com.clipsync.app.network.WsMessageBuilder
+import com.clipsync.app.service.ClipboardService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -44,15 +42,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getInstance(application)
     private val webSocketClient = WebSocketClient()
     private val clipboardMonitor = ClipboardMonitor(application)
-    private val apiClient = ApiClient()
+    private val apiClient = ApiClient().apply {
+        viewModelScope.launch { baseUrl = settingsManager.getHttpUrl() }
+    }
     private val heartbeatManager = HeartbeatManager(webSocketClient)
-
-    private val syncEngine = SyncEngine(
-        webSocketClient = webSocketClient,
-        clipboardMonitor = clipboardMonitor,
-        settingsManager = settingsManager,
-        database = database
-    )
 
     // ─── UI State ───
 
@@ -65,8 +58,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _syncStatus = MutableStateFlow<SyncStatus>(SyncStatus.Idle)
     val syncStatus: StateFlow<SyncStatus> = _syncStatus.asStateFlow()
 
-    private val _history = MutableStateFlow<List<ClipboardEntity>>(emptyList())
-    val history: StateFlow<List<ClipboardEntity>> = _history.asStateFlow()
+    private val _history = MutableStateFlow<List<ClipboardHistoryItem>>(emptyList())
+    val history: StateFlow<List<ClipboardHistoryItem>> = _history.asStateFlow()
 
     private val _devices = MutableStateFlow<List<DeviceEntity>>(emptyList())
     val devices: StateFlow<List<DeviceEntity>> = _devices.asStateFlow()
@@ -76,7 +69,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         observeWebSocketState()
-        observeClipboardChanges()
         observeHistory()
         observeDevices()
         checkLoginState()
@@ -87,6 +79,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val isLoggedIn = settingsManager.isLoggedIn()
             if (isLoggedIn) {
                 _uiState.value = MainUiState.Authenticated
+                setClipboardServiceRunning(true)
                 connectToServer()
             } else {
                 _uiState.value = MainUiState.Unauthenticated
@@ -117,23 +110,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun observeClipboardChanges() {
-        viewModelScope.launch {
-            clipboardMonitor.currentText.collectLatest { text ->
-                if (text != null) {
-                    syncEngine.pushToServer(text)
-                }
-            }
-        }
-    }
-
     private fun observeHistory() {
         viewModelScope.launch {
-            database.clipboardDao().getAll().collectLatest { items ->
-                // Only keep recent items; filter out oversized content to save memory
+            database.clipboardDao().getHistorySummaries().collectLatest { items ->
+                Log.d(TAG, "历史摘要已刷新: count=${items.size}")
                 _history.value = items
-                    .take(50)
-                    .filter { it.content.length <= 512 * 1024 }
             }
         }
     }
@@ -152,8 +133,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         when (wsMessage.type) {
             MessageType.AuthResponse -> handleAuthResponse(wsMessage.payload)
             MessageType.HeartbeatAck -> { /* acknowledged */ }
-            MessageType.ClipboardSync -> syncEngine.handleIncomingSync(wsMessage.payload)
-            MessageType.ClipboardHistory -> syncEngine.handleHistoryResponse(wsMessage.payload)
+            MessageType.ClipboardSync -> Log.d(TAG, "Clipboard sync handled by ClipboardService")
+            MessageType.ClipboardHistory -> Log.d(TAG, "Clipboard history handled by ClipboardService")
             MessageType.DeviceListResponse -> handleDeviceListResponse(wsMessage.payload)
             MessageType.Error -> handleError(wsMessage.payload)
             MessageType.Ping -> webSocketClient.send(WsMessageBuilder.pong())
@@ -172,8 +153,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 viewModelScope.launch { settingsManager.setDeviceId(it) }
             }
             heartbeatManager.start()
-            clipboardMonitor.start()
-            syncEngine.requestHistory()
+            setClipboardServiceRunning(true)
             requestDeviceList()
         } else {
             Log.e(TAG, "Auth failed: $message")
@@ -227,13 +207,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         settingsManager.setToken(response.token)
                         response.deviceId?.let { settingsManager.setDeviceId(it) }
                         _uiState.value = MainUiState.Authenticated
+                        setClipboardServiceRunning(true)
                         connectToServer()
                     } else {
                         _uiState.value = MainUiState.Unauthenticated
-                        _errorMessage.value = response.error ?: "Login failed"
+                        _errorMessage.value = response.message ?: response.error ?: "Login failed"
                     }
                 },
                 onFailure = { error ->
+                    Log.e("MainViewModel", "Login failed", error)
                     _uiState.value = MainUiState.Unauthenticated
                     _errorMessage.value = error.message ?: "Network error"
                 }
@@ -261,13 +243,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         settingsManager.setToken(response.token)
                         response.deviceId?.let { settingsManager.setDeviceId(it) }
                         _uiState.value = MainUiState.Authenticated
+                        setClipboardServiceRunning(true)
                         connectToServer()
                     } else {
                         _uiState.value = MainUiState.Unauthenticated
-                        _errorMessage.value = response.error ?: "Registration failed"
+                        _errorMessage.value = response.message ?: response.error ?: "Registration failed"
                     }
                 },
                 onFailure = { error ->
+                    Log.e("MainViewModel", "Register failed", error)
                     _uiState.value = MainUiState.Unauthenticated
                     _errorMessage.value = error.message ?: "Network error"
                 }
@@ -280,6 +264,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             clipboardMonitor.stop()
             heartbeatManager.stop()
             webSocketClient.disconnect()
+            setClipboardServiceRunning(false)
             settingsManager.clearAll()
             _uiState.value = MainUiState.Unauthenticated
             _connectionState.value = ConnectionState.Disconnected
@@ -292,8 +277,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun copyToClipboard(content: String) {
-        clipboardMonitor.setTextToClipboard(content)
+    fun copyToClipboard(historyId: Int) {
+        viewModelScope.launch {
+            val entity = database.clipboardDao().getById(historyId)
+            if (entity == null) {
+                Log.w(TAG, "复制历史项失败，未找到记录: id=$historyId")
+                _errorMessage.value = "未找到要复制的历史记录"
+                return@launch
+            }
+
+            when (entity.contentType) {
+                "image" -> {
+                    Log.d(TAG, "复制历史图片到剪贴板: id=$historyId, size=${entity.content.length}")
+                    clipboardMonitor.setImageToClipboard(entity.content)
+                }
+                else -> {
+                    Log.d(TAG, "复制历史文本到剪贴板: id=$historyId, length=${entity.content.length}")
+                    clipboardMonitor.setTextToClipboard(entity.content)
+                }
+            }
+        }
     }
 
     fun requestDeviceList() {
@@ -340,11 +343,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun setClipboardServiceRunning(enabled: Boolean) {
+        val application = getApplication<Application>()
+        val serviceIntent = Intent(application, ClipboardService::class.java)
+        if (enabled) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                application.startForegroundService(serviceIntent)
+            } else {
+                application.startService(serviceIntent)
+            }
+        } else {
+            application.stopService(serviceIntent)
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         clipboardMonitor.stop()
         heartbeatManager.destroy()
-        syncEngine.destroy()
         webSocketClient.destroy()
     }
 
