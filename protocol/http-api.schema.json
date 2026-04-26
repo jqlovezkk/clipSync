@@ -1,0 +1,292 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ClipSync HTTP API Specification",
+  "description": "HTTP API contracts for ClipSync v1",
+  "version": "1.0.0",
+  "base_url": "http://localhost:8081/api/v1",
+  "endpoints": {
+    "POST /auth/login": {
+      "description": "Authenticate user and receive token",
+      "request": {
+        "content_type": "application/json",
+        "body": {
+          "type": "object",
+          "required": ["username", "password", "device_name", "platform"],
+          "properties": {
+            "username": { "type": "string", "minLength": 3, "maxLength": 50 },
+            "password": { "type": "string", "minLength": 6, "maxLength": 128 },
+            "device_name": { "type": "string", "minLength": 1, "maxLength": 100 },
+            "platform": { "type": "string", "enum": ["windows", "android", "macos", "ios"] }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Authentication successful",
+          "body": {
+            "type": "object",
+            "required": ["success", "token", "device_id", "expires_at"],
+            "properties": {
+              "success": { "type": "boolean", "const": true },
+              "token": { "type": "string" },
+              "device_id": { "type": "string" },
+              "expires_at": { "type": "integer", "description": "Unix milliseconds" }
+            }
+          }
+        },
+        "401": {
+          "description": "Invalid credentials",
+          "body": {
+            "type": "object",
+            "required": ["success", "error"],
+            "properties": {
+              "success": { "type": "boolean", "const": false },
+              "error": { "type": "string", "const": "INVALID_CREDENTIALS" }
+            }
+          }
+        }
+      }
+    },
+    "POST /auth/register": {
+      "description": "Register new user and device",
+      "request": {
+        "content_type": "application/json",
+        "body": {
+          "type": "object",
+          "required": ["username", "password", "device_name", "platform"],
+          "properties": {
+            "username": { "type": "string", "minLength": 3, "maxLength": 50 },
+            "password": { "type": "string", "minLength": 6, "maxLength": 128 },
+            "device_name": { "type": "string", "minLength": 1, "maxLength": 100 },
+            "platform": { "type": "string", "enum": ["windows", "android", "macos", "ios"] }
+          }
+        }
+      },
+      "responses": {
+        "201": {
+          "description": "Registration successful",
+          "body": {
+            "type": "object",
+            "required": ["success", "token", "device_id", "expires_at"],
+            "properties": {
+              "success": { "type": "boolean", "const": true },
+              "token": { "type": "string" },
+              "device_id": { "type": "string" },
+              "expires_at": { "type": "integer" }
+            }
+          }
+        },
+        "409": {
+          "description": "Username already exists",
+          "body": {
+            "type": "object",
+            "required": ["success", "error"],
+            "properties": {
+              "success": { "type": "boolean", "const": false },
+              "error": { "type": "string", "const": "USERNAME_EXISTS" }
+            }
+          }
+        }
+      }
+    },
+    "POST /auth/refresh": {
+      "description": "Refresh authentication token",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer <token>"
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Token refreshed",
+          "body": {
+            "type": "object",
+            "required": ["success", "token", "expires_at"],
+            "properties": {
+              "success": { "type": "boolean", "const": true },
+              "token": { "type": "string" },
+              "expires_at": { "type": "integer" }
+            }
+          }
+        },
+        "401": {
+          "description": "Invalid or expired token",
+          "body": {
+            "type": "object",
+            "required": ["success", "error"],
+            "properties": {
+              "success": { "type": "boolean", "const": false },
+              "error": { "type": "string", "enum": ["AUTH_FAILED", "TOKEN_EXPIRED"] }
+            }
+          }
+        }
+      }
+    },
+    "GET /health": {
+      "description": "Server health check",
+      "request": {},
+      "responses": {
+        "200": {
+          "description": "Server is healthy",
+          "body": {
+            "type": "object",
+            "required": ["status", "version", "uptime", "connected_clients"],
+            "properties": {
+              "status": { "type": "string", "const": "ok" },
+              "version": { "type": "string" },
+              "uptime": { "type": "number" },
+              "connected_clients": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
+    "GET /devices": {
+      "description": "List registered devices",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer <token>"
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Device list",
+          "body": {
+            "type": "object",
+            "required": ["devices"],
+            "properties": {
+              "devices": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["device_id", "device_name", "platform", "last_seen", "is_online"],
+                  "properties": {
+                    "device_id": { "type": "string" },
+                    "device_name": { "type": "string" },
+                    "platform": { "type": "string" },
+                    "last_seen": { "type": "integer" },
+                    "is_online": { "type": "boolean" },
+                    "created_at": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "DELETE /devices/{device_id}": {
+      "description": "Unregister a device",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer <token>"
+        },
+        "path_params": {
+          "device_id": { "type": "string" }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Device unregistered",
+          "body": {
+            "type": "object",
+            "required": ["success"],
+            "properties": {
+              "success": { "type": "boolean", "const": true }
+            }
+          }
+        },
+        "404": {
+          "description": "Device not found",
+          "body": {
+            "type": "object",
+            "required": ["error"],
+            "properties": {
+              "error": { "type": "string", "const": "DEVICE_NOT_FOUND" }
+            }
+          }
+        }
+      }
+    },
+    "POST /upload": {
+      "description": "Upload file for clipboard sync",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer <token>"
+        },
+        "content_type": "multipart/form-data",
+        "body": {
+          "type": "object",
+          "properties": {
+            "file": { "type": "string", "format": "binary" },
+            "checksum": { "type": "string", "description": "SHA256 hash" }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "File uploaded",
+          "body": {
+            "type": "object",
+            "required": ["success", "file_id", "download_url"],
+            "properties": {
+              "success": { "type": "boolean", "const": true },
+              "file_id": { "type": "string" },
+              "download_url": { "type": "string" }
+            }
+          }
+        },
+        "413": {
+          "description": "File too large",
+          "body": {
+            "type": "object",
+            "required": ["error"],
+            "properties": {
+              "error": { "type": "string", "const": "CONTENT_TOO_LARGE" }
+            }
+          }
+        }
+      }
+    },
+    "GET /download/{file_id}": {
+      "description": "Download uploaded file",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer <token>"
+        },
+        "path_params": {
+          "file_id": { "type": "string" }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "File content",
+          "content_type": "<original mime type>",
+          "body": { "type": "string", "format": "binary" }
+        },
+        "404": {
+          "description": "File not found",
+          "body": {
+            "type": "object",
+            "required": ["error"],
+            "properties": {
+              "error": { "type": "string", "const": "FILE_NOT_FOUND" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "error_codes": {
+    "AUTH_FAILED": { "http_status": 401, "description": "Invalid credentials or token" },
+    "TOKEN_EXPIRED": { "http_status": 401, "description": "Token has expired" },
+    "RATE_LIMITED": { "http_status": 429, "description": "Too many requests" },
+    "INVALID_PAYLOAD": { "http_status": 400, "description": "Malformed request" },
+    "CONTENT_TOO_LARGE": { "http_status": 413, "description": "Content exceeds size limit (5MB)" },
+    "DEVICE_NOT_FOUND": { "http_status": 404, "description": "Device ID not found" },
+    "INTERNAL_ERROR": { "http_status": 500, "description": "Server internal error" },
+    "DUPLICATE_CONTENT": { "http_status": 409, "description": "Same checksum already exists" },
+    "USERNAME_EXISTS": { "http_status": 409, "description": "Username already registered" },
+    "INVALID_CREDENTIALS": { "http_status": 401, "description": "Wrong username or password" }
+  }
+}

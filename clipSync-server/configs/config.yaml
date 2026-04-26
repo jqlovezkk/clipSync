@@ -1,0 +1,28 @@
+# ClipSync Server Configuration
+
+# WebSocket server port (real-time clipboard sync)
+ws_port: 8080
+
+# HTTP API server port (auth, file upload, device management)
+http_port: 8081
+
+# SQLite database path
+db_path: ./data/clipsync.db
+
+# JWT secret key (CHANGE IN PRODUCTION)
+jwt_secret: "clipsync-secret-change-in-production"
+
+# JWT token expiry in hours (720 = 30 days)
+jwt_expiry_hours: 720
+
+# File storage directory
+file_storage_path: ./data/files
+
+# Maximum file upload size in MB
+max_file_size_mb: 5
+
+# Maximum clipboard history items per user
+clipboard_history_limit: 50
+
+# Heartbeat timeout in seconds (client disconnected if no heartbeat)
+heartbeat_timeout_seconds: 90

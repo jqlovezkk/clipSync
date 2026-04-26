@@ -1,0 +1,88 @@
+<UserControl x:Class="ClipSync.WPF.UI.Views.LoginView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{StaticResource BackgroundColor}">
+    <Grid>
+        <!-- 装饰性渐变背景 -->
+        <Grid.Background>
+            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#0A0E17" Offset="0"/>
+                <GradientStop Color="#111827" Offset="0.5"/>
+                <GradientStop Color="#0A0E17" Offset="1"/>
+            </LinearGradientBrush>
+        </Grid.Background>
+        
+        <!-- 中心登录卡片 -->
+        <Border Style="{StaticResource CardStyle}" 
+                MaxWidth="480" 
+                VerticalAlignment="Center" 
+                HorizontalAlignment="Center"
+                Margin="40">
+            <StackPanel Margin="32">
+                <!-- Logo 和标题 -->
+                <TextBlock Text="⚡ ClipSync" 
+                          FontSize="36" 
+                          FontWeight="Bold" 
+                          HorizontalAlignment="Center" 
+                          Margin="0,0,0,8" 
+                          Foreground="{StaticResource PrimaryColor}"/>
+                
+                <TextBlock Text="Sync your clipboard across devices" 
+                          FontSize="14" 
+                          HorizontalAlignment="Center" 
+                          Margin="0,0,0,32" 
+                          Foreground="{StaticResource TextSecondaryColor}"/>
+
+                <!-- 表单标签 -->
+                <TextBlock Text="WebSocket Server URL" 
+                          Style="{StaticResource LabelStyle}" 
+                          Margin="0,0,0,6"/>
+                <TextBox x:Name="ServerUrlBox" 
+                        Text="ws://localhost:8080" 
+                        Margin="0,0,0,16"/>
+
+                <TextBlock Text="HTTP Server URL" 
+                          Style="{StaticResource LabelStyle}" 
+                          Margin="0,0,0,6"/>
+                <TextBox x:Name="HttpUrlBox" 
+                        Text="http://localhost:8081" 
+                        Margin="0,0,0,16"/>
+
+                <TextBlock Text="Username" 
+                          Style="{StaticResource LabelStyle}" 
+                          Margin="0,0,0,6"/>
+                <TextBox x:Name="UsernameBox" 
+                        Margin="0,0,0,16"/>
+
+                <TextBlock Text="Password" 
+                          Style="{StaticResource LabelStyle}" 
+                          Margin="0,0,0,6"/>
+                <PasswordBox x:Name="PasswordBox" 
+                            Margin="0,0,0,24"/>
+
+                <!-- 错误提示 -->
+                <TextBlock x:Name="ErrorText" 
+                          Foreground="{StaticResource ErrorColor}" 
+                          Margin="0,0,0,16" 
+                          TextWrapping="Wrap" 
+                          Visibility="Collapsed"
+                          FontWeight="Medium"/>
+
+                <!-- 按钮组 -->
+                <Button x:Name="LoginButton" 
+                       Content="Sign In" 
+                       Width="200" 
+                       Margin="0,0,0,12" 
+                       Padding="16,12"
+                       HorizontalAlignment="Center"/>
+                
+                <Button x:Name="RegisterButton" 
+                       Content="Create Account" 
+                       Width="200" 
+                       Padding="16,12"
+                       Style="{StaticResource SecondaryButtonStyle}"
+                       HorizontalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

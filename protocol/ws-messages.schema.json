@@ -1,0 +1,260 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ClipSync WebSocket Message Envelope",
+  "description": "Base envelope for all WebSocket messages in ClipSync protocol v1",
+  "type": "object",
+  "required": ["type", "version", "timestamp", "payload"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "auth",
+        "auth_response",
+        "heartbeat",
+        "heartbeat_ack",
+        "clipboard_push",
+        "clipboard_sync",
+        "clipboard_pull",
+        "clipboard_history",
+        "device_list",
+        "device_list_response",
+        "device_unregister",
+        "error",
+        "ping",
+        "pong"
+      ],
+      "description": "Message type identifier"
+    },
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Protocol version"
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "Unix timestamp in milliseconds"
+    },
+    "device_id": {
+      "type": "string",
+      "description": "Unique device identifier (optional)"
+    },
+    "payload": {
+      "type": "object",
+      "description": "Type-specific payload"
+    }
+  },
+  "oneOf": [
+    {
+      "if": { "properties": { "type": { "const": "auth" } } },
+      "then": { "$ref": "#/definitions/auth" }
+    },
+    {
+      "if": { "properties": { "type": { "const": "auth_response" } } },
+      "then": { "$ref": "#/definitions/auth_response" }
+    },
+    {
+      "if": { "properties": { "type": { "const": "heartbeat" } } },
+      "then": { "$ref": "#/definitions/heartbeat" }
+    },
+    {
+      "if": { "properties": { "type": { "const": "heartbeat_ack" } } },
+      "then": { "$ref": "#/definitions/heartbeat_ack" }
+    },
+    {
+      "if": { "properties": { "type": { "const": "clipboard_push" } } },
+      "then": { "$ref": "#/definitions/clipboard_push" }
+    },
+    {
+      "if": { "properties": { "type": { "const": "clipboard_sync" } } },
+      "then": { "$ref": "#/definitions/clipboard_sync" }
+    },
+    {
+      "if": { "properties": { "type": { "const": "clipboard_pull" } } },
+      "then": { "$ref": "#/definitions/clipboard_pull" }
+    },
+    {
+      "if": { "properties": { "type": { "const": "clipboard_history" } } },
+      "then": { "$ref": "#/definitions/clipboard_history" }
+    },
+    {
+      "if": { "properties": { "type": { "const": "device_list_response" } } },
+      "then": { "$ref": "#/definitions/device_list_response" }
+    },
+    {
+      "if": { "properties": { "type": { "const": "error" } } },
+      "then": { "$ref": "#/definitions/error" }
+    }
+  ],
+  "definitions": {
+    "auth": {
+      "properties": {
+        "payload": {
+          "type": "object",
+          "required": ["token"],
+          "properties": {
+            "token": { "type": "string" },
+            "device_name": { "type": "string" },
+            "platform": { "type": "string", "enum": ["windows", "android", "macos", "ios"] }
+          }
+        }
+      }
+    },
+    "auth_response": {
+      "properties": {
+        "payload": {
+          "type": "object",
+          "required": ["success"],
+          "properties": {
+            "success": { "type": "boolean" },
+            "device_id": { "type": "string" },
+            "message": { "type": "string" }
+          }
+        }
+      }
+    },
+    "heartbeat": {
+      "properties": {
+        "payload": {
+          "type": "object",
+          "properties": {
+            "seq": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "heartbeat_ack": {
+      "properties": {
+        "payload": {
+          "type": "object",
+          "properties": {
+            "seq": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "clipboard_push": {
+      "properties": {
+        "payload": {
+          "type": "object",
+          "required": ["content_type", "content", "format", "checksum"],
+          "properties": {
+            "content_type": { "type": "string", "enum": ["text", "image", "file"] },
+            "content": { "type": "string" },
+            "format": { "type": "string" },
+            "size": { "type": "integer", "minimum": 0 },
+            "checksum": { "type": "string" }
+          }
+        }
+      }
+    },
+    "clipboard_sync": {
+      "properties": {
+        "payload": {
+          "type": "object",
+          "required": ["source_device_id", "source_device_name", "content_type", "content", "format", "checksum"],
+          "properties": {
+            "source_device_id": { "type": "string" },
+            "source_device_name": { "type": "string" },
+            "content_type": { "type": "string", "enum": ["text", "image", "file"] },
+            "content": { "type": "string" },
+            "format": { "type": "string" },
+            "size": { "type": "integer", "minimum": 0 },
+            "checksum": { "type": "string" },
+            "encrypted": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "clipboard_pull": {
+      "properties": {
+        "payload": {
+          "type": "object",
+          "properties": {
+            "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 20 },
+            "after_id": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "clipboard_history": {
+      "properties": {
+        "payload": {
+          "type": "object",
+          "required": ["items", "total", "has_more"],
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/clipboard_item" }
+            },
+            "total": { "type": "integer" },
+            "has_more": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "clipboard_item": {
+      "type": "object",
+      "required": ["id", "content_type", "content", "format", "checksum", "source_device_id", "source_device_name", "created_at"],
+      "properties": {
+        "id": { "type": "integer" },
+        "content_type": { "type": "string", "enum": ["text", "image", "file"] },
+        "content": { "type": "string" },
+        "format": { "type": "string" },
+        "size": { "type": "integer", "minimum": 0 },
+        "checksum": { "type": "string" },
+        "source_device_id": { "type": "string" },
+        "source_device_name": { "type": "string" },
+        "created_at": { "type": "integer" }
+      }
+    },
+    "device_list_response": {
+      "properties": {
+        "payload": {
+          "type": "object",
+          "required": ["devices"],
+          "properties": {
+            "devices": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/device" }
+            }
+          }
+        }
+      }
+    },
+    "device": {
+      "type": "object",
+      "required": ["device_id", "device_name", "platform", "last_seen", "is_online"],
+      "properties": {
+        "device_id": { "type": "string" },
+        "device_name": { "type": "string" },
+        "platform": { "type": "string", "enum": ["windows", "android", "macos", "ios"] },
+        "last_seen": { "type": "integer" },
+        "is_online": { "type": "boolean" }
+      }
+    },
+    "error": {
+      "properties": {
+        "payload": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "AUTH_FAILED",
+                "TOKEN_EXPIRED",
+                "RATE_LIMITED",
+                "INVALID_PAYLOAD",
+                "CONTENT_TOO_LARGE",
+                "DEVICE_NOT_FOUND",
+                "INTERNAL_ERROR",
+                "DUPLICATE_CONTENT"
+              ]
+            },
+            "message": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,365 @@
+package com.clipsync.app.core
+
+import android.util.Log
+import com.clipsync.app.data.AppDatabase
+import com.clipsync.app.data.entities.ClipboardEntity
+import com.clipsync.app.network.WsMessage
+import com.clipsync.app.network.WsMessageBuilder
+import com.clipsync.app.network.WebSocketClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.int
+
+/**
+ * Orchestrates clipboard sync between local clipboard and remote server.
+ * Handles push on local change, sync on remote change, and history management.
+ */
+class SyncEngine(
+    private val webSocketClient: WebSocketClient,
+    private val clipboardMonitor: ClipboardMonitor,
+    private val settingsManager: SettingsManager,
+    private val database: AppDatabase
+) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var isDestroyed = false
+
+    private val _syncStatus = MutableStateFlow<SyncStatus>(SyncStatus.Idle)
+    val syncStatus: StateFlow<SyncStatus> = _syncStatus.asStateFlow()
+
+    private var lastSentChecksum: String? = null
+
+    /** Maximum content size for sync: 512KB */
+    private val maxContentSizeBytes = 512 * 1024
+
+    /**
+     * Initialize the sync engine.
+     */
+    fun initialize() {
+        scope.launch {
+            val syncEnabled = settingsManager.isSyncEnabled()
+            if (syncEnabled) {
+                startMonitoring()
+            }
+        }
+    }
+
+    /**
+     * Start monitoring local clipboard changes and push to server.
+     */
+    fun startMonitoring() {
+        scope.launch {
+            settingsManager.syncEnabledFlow.collect { enabled ->
+                if (enabled) {
+                    _syncStatus.value = SyncStatus.Active
+                    Log.d(TAG, "Sync monitoring enabled")
+                } else {
+                    _syncStatus.value = SyncStatus.Paused
+                    Log.d(TAG, "Sync monitoring paused")
+                }
+            }
+        }
+    }
+
+    /**
+     * Push local clipboard content (text) to server.
+     */
+    fun pushToServer(content: String) {
+        scope.launch {
+            if (isDestroyed) return@launch
+            val syncEnabled = settingsManager.isSyncEnabled()
+            if (!syncEnabled) {
+                Log.d(TAG, "Sync disabled, skipping push")
+                return@launch
+            }
+
+            if (!webSocketClient.isConnected()) {
+                Log.w(TAG, "Not connected, cannot push")
+                return@launch
+            }
+
+            // Check content size to prevent OOM
+            val contentSizeBytes = content.toByteArray(Charsets.UTF_8).size
+            if (contentSizeBytes > maxContentSizeBytes) {
+                Log.w(TAG, "Content too large (${contentSizeBytes} bytes), skipping push")
+                return@launch
+            }
+
+            // Deduplication: skip if same content was just sent
+            val checksum = EncryptionHelper.calculateChecksum(content)
+            if (checksum == lastSentChecksum) {
+                Log.d(TAG, "Duplicate content, skipping push")
+                return@launch
+            }
+            lastSentChecksum = checksum
+
+            val encryptionEnabled = settingsManager.isEncryptionEnabled()
+            val contentToSend = if (encryptionEnabled) {
+                try {
+                    EncryptionHelper.encryptWithSalt(content)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Encryption failed, skipping push", e)
+                    return@launch
+                }
+            } else {
+                content
+            }
+
+            // Use content length as size estimate to avoid creating another byte array copy
+            val estimatedSize = contentToSend.length
+
+            val message = WsMessageBuilder.clipboardPush(
+                "text",
+                contentToSend,
+                checksum,
+                estimatedSize
+            )
+
+            val deviceId = settingsManager.getDeviceId()
+            val messageWithDevice = message.copy(deviceId = deviceId)
+
+            val sent = webSocketClient.send(messageWithDevice)
+            if (sent) {
+                Log.d(TAG, "Pushed text to server (${content.length} chars)")
+                // Save to local history
+                saveToHistory(content, "text", checksum, deviceId, format = "text/plain")
+            } else {
+                Log.w(TAG, "Failed to push to server")
+            }
+        }
+    }
+
+    /**
+     * Push local clipboard image to server.
+     */
+    fun pushImageToServer(imageBase64: String, format: String, size: Int, checksum: String) {
+        scope.launch {
+            if (isDestroyed) return@launch
+            val syncEnabled = settingsManager.isSyncEnabled()
+            if (!syncEnabled) {
+                Log.d(TAG, "Sync disabled, skipping image push")
+                return@launch
+            }
+
+            if (!webSocketClient.isConnected()) {
+                Log.w(TAG, "Not connected, cannot push image")
+                return@launch
+            }
+
+            // Check content size
+            if (size > maxContentSizeBytes) {
+                Log.w(TAG, "Image too large (${size} bytes), skipping push")
+                return@launch
+            }
+
+            // Deduplication
+            if (checksum == lastSentChecksum) {
+                Log.d(TAG, "Duplicate image, skipping push")
+                return@launch
+            }
+            lastSentChecksum = checksum
+
+            val encryptionEnabled = settingsManager.isEncryptionEnabled()
+            val contentToSend = if (encryptionEnabled) {
+                try {
+                    EncryptionHelper.encryptWithSalt(imageBase64)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Image encryption failed, skipping push", e)
+                    return@launch
+                }
+            } else {
+                imageBase64
+            }
+
+            val message = WsMessageBuilder.clipboardPush(
+                "image",
+                contentToSend,
+                checksum,
+                size,
+                format
+            )
+
+            val deviceId = settingsManager.getDeviceId()
+            val messageWithDevice = message.copy(deviceId = deviceId)
+
+            val sent = webSocketClient.send(messageWithDevice)
+            if (sent) {
+                Log.d(TAG, "Pushed image to server ($size bytes, format=$format)")
+                saveToHistory(imageBase64, "image", checksum, deviceId, format = format)
+            } else {
+                Log.w(TAG, "Failed to push image to server")
+            }
+        }
+    }
+
+    /**
+     * Handle incoming clipboard sync from server.
+     */
+    fun handleIncomingSync(payload: JsonObject) {
+        scope.launch {
+            if (isDestroyed) return@launch
+            val content = payload["content"]?.jsonPrimitive?.content ?: return@launch
+            val contentType = payload["content_type"]?.jsonPrimitive?.content ?: "text"
+            val sourceDeviceId = payload["source_device_id"]?.jsonPrimitive?.content ?: ""
+            val sourceDeviceName = payload["source_device_name"]?.jsonPrimitive?.content ?: ""
+            val encrypted = payload["encrypted"]?.jsonPrimitive?.booleanOrNull ?: false
+            val checksum = payload["checksum"]?.jsonPrimitive?.content ?: ""
+            val format = payload["format"]?.jsonPrimitive?.content ?: "text/plain"
+
+            // Skip if this content originated from this device (avoid echo loop)
+            val myDeviceId = settingsManager.getDeviceId()
+            if (sourceDeviceId == myDeviceId) {
+                Log.d(TAG, "Skipping own content (echo prevention)")
+                return@launch
+            }
+
+            val encryptionEnabled = settingsManager.isEncryptionEnabled()
+            val decryptedContent = if (encrypted && encryptionEnabled) {
+                EncryptionHelper.decryptWithSalt(content) ?: run {
+                    Log.e(TAG, "Failed to decrypt content")
+                    return@launch
+                }
+            } else {
+                content
+            }
+
+            when (contentType) {
+                "text" -> {
+                    // Set to clipboard (this won't trigger a push due to echo prevention)
+                    clipboardMonitor.setTextToClipboard(decryptedContent)
+                    Log.d(TAG, "Synced text from $sourceDeviceName: ${decryptedContent.take(50)}...")
+                }
+                "image" -> {
+                    // Set image to clipboard
+                    clipboardMonitor.setImageToClipboard(decryptedContent, format)
+                    Log.d(TAG, "Synced image from $sourceDeviceName (${decryptedContent.length} chars base64)")
+                }
+                else -> {
+                    Log.w(TAG, "Unknown content type: $contentType")
+                    return@launch
+                }
+            }
+
+            // Save to local history
+            saveToHistory(decryptedContent, contentType, checksum, sourceDeviceId, sourceDeviceName, format)
+        }
+    }
+
+    /**
+     * Handle incoming clipboard history from server.
+     */
+    fun handleHistoryResponse(payload: JsonObject) {
+        scope.launch {
+            if (isDestroyed) return@launch
+            val itemsArray = payload["items"]
+            if (itemsArray !is JsonArray) return@launch
+
+            val myDeviceId = settingsManager.getDeviceId()
+            val items = itemsArray.jsonArray.mapNotNull { item ->
+                val obj = item as? JsonObject ?: return@mapNotNull null
+                val content = obj["content"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                // Skip items with content too large
+                if (content.length > maxContentSizeBytes) return@mapNotNull null
+                val checksum = obj["checksum"]?.jsonPrimitive?.content ?: ""
+                val sourceDeviceId = obj["source_device_id"]?.jsonPrimitive?.content ?: ""
+                val sourceDeviceName = obj["source_device_name"]?.jsonPrimitive?.content ?: ""
+                val createdAt = obj["created_at"]?.jsonPrimitive?.long ?: System.currentTimeMillis()
+                val contentType = obj["content_type"]?.jsonPrimitive?.content ?: "text"
+
+                ClipboardEntity(
+                    content = content,
+                    contentType = contentType,
+                    checksum = checksum,
+                    sourceDeviceId = sourceDeviceId,
+                    sourceDeviceName = sourceDeviceName,
+                    createdAt = createdAt
+                )
+            }
+
+            // Insert into local database
+            database.clipboardDao().insertAll(items)
+            Log.d(TAG, "Saved ${items.size} history items")
+        }
+    }
+
+    /**
+     * Request clipboard history from server.
+     */
+    fun requestHistory(limit: Int = 20) {
+        if (!webSocketClient.isConnected()) return
+        val message = WsMessageBuilder.clipboardPull(limit = limit)
+        webSocketClient.send(message)
+    }
+
+    /**
+     * Save content to local history database.
+     */
+    private fun saveToHistory(
+        content: String,
+        contentType: String,
+        checksum: String,
+        sourceDeviceId: String,
+        sourceDeviceName: String = "",
+        format: String = "text/plain"
+    ) {
+        scope.launch {
+            // Skip saving if content is too large
+            if (content.toByteArray(Charsets.UTF_8).size > maxContentSizeBytes) {
+                Log.w(TAG, "Content too large for history, skipping save")
+                return@launch
+            }
+            val entity = ClipboardEntity(
+                content = content,
+                contentType = contentType,
+                checksum = checksum,
+                sourceDeviceId = sourceDeviceId,
+                sourceDeviceName = sourceDeviceName,
+                createdAt = System.currentTimeMillis()
+            )
+            database.clipboardDao().insert(entity)
+            // Trim to last 50 items
+            database.clipboardDao().deleteOldItems(50)
+        }
+    }
+
+    /**
+     * Reset the last sent checksum (e.g., after reconnect).
+     */
+    fun resetDeduplication() {
+        lastSentChecksum = null
+    }
+
+    /**
+     * Release resources and cancel all coroutines.
+     */
+    fun destroy() {
+        isDestroyed = true
+        scope.cancel()
+        Log.d(TAG, "SyncEngine destroyed")
+    }
+
+    companion object {
+        private const val TAG = "SyncEngine"
+    }
+}
+
+/**
+ * Sync status sealed class.
+ */
+sealed class SyncStatus {
+    object Idle : SyncStatus()
+    object Active : SyncStatus()
+    object Paused : SyncStatus()
+    data class Error(val message: String) : SyncStatus()
+}
