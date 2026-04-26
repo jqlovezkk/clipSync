@@ -18,11 +18,19 @@ jwt_expiry_hours: 720
 # File storage directory
 file_storage_path: ./data/files
 
-# Maximum file upload size in MB
-max_file_size_mb: 5
+# Maximum file upload size in MB (50MB for large file support)
+max_file_size_mb: 50
 
 # Maximum clipboard history items per user
 clipboard_history_limit: 50
 
 # Heartbeat timeout in seconds (client disconnected if no heartbeat)
 heartbeat_timeout_seconds: 90
+
+# Maximum WebSocket message size in MB (for small clipboard sync)
+# Large files should use HTTP upload + WebSocket file_id reference
+ws_max_message_size_mb: 1
+
+# File reference mode: when clipboard content exceeds this size (KB),
+# clients should upload via HTTP and send file_id via WebSocket
+file_reference_threshold_kb: 512
