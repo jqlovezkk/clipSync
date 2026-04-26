@@ -168,7 +168,7 @@ func (c *Client) handleClipboardPush(msg protocol.WSMessage) {
 			log.Printf("[WS] Error checking duplicate: %v", err)
 		}
 		if isDup {
-			c.sendError("DUPLICATE_CONTENT", "Content already exists")
+			log.Printf("[WS] Duplicate clipboard ignored: user_id=%d device_id=%s checksum=%s", c.UserID, c.DeviceID, pushPayload.Checksum)
 			return
 		}
 	}
