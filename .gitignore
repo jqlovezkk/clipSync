@@ -1,20 +1,32 @@
 # Android
 .gradle/
 **/build/
+**/*.apk
+**/*.aab
+**/*.ap_
+**/*.dex
+**/*.class
 clipSync-android/local.properties
 *.hprof
 
 # Windows / .NET (WPF)
 **/bin/
 **/obj/
+**/publish/
+*.exe
+*.dll
+*.pdb
 *.user
 *.suo
 *.userosscache
 *.sln.docstates
+*.nupkg
+*.snk
 
 # Go / Server
 clipSync-server/bin/
 clipSync-server/data/
+clipSync-server/**/*.exe
 server.exe
 clipsync-server.exe
 *.zip
@@ -26,7 +38,19 @@ clipsync-server.exe
 .idea/
 *.iml
 .vscode/
+*.swp
+*~
 
 # OS
 .DS_Store
 Thumbs.db
+Desktop.ini
+
+# Test & Coverage
+**/coverage/
+**/*.coverage
+**/*.xml.lcov
+
+# Logs
+*.log
+logs/
