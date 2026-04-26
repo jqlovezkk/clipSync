@@ -33,11 +33,13 @@
                     <Button x:Name="RefreshButton" 
                            Content="⟳ Refresh" 
                            Margin="0,0,8,0" 
-                           Padding="16,8"/>
+                           Padding="12,6"
+                           Style="{StaticResource SecondaryButtonStyle}"/>
                     <Button x:Name="ClearButton" 
                            Content="✕ Clear" 
-                           Padding="16,8"
-                           Style="{StaticResource DangerButtonStyle}"/>
+                           Padding="12,6"
+                           Style="{StaticResource DangerButtonStyle}"
+                           Opacity="0.8"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -137,13 +139,14 @@
                                           TextTrimming="CharacterEllipsis" 
                                           FontWeight="Medium"
                                           FontSize="14"
-                                          Foreground="{StaticResource TextColor}">
+                                          Foreground="{StaticResource TextColor}"
+                                          HorizontalAlignment="Left">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Text" Value="{Binding Content}"/>
                                             <Style.Triggers>
                                                 <DataTrigger Binding="{Binding ContentType}" Value="image">
-                                                    <Setter Property="Text" Value="️ Image ({Binding Format})"/>
+                                                    <Setter Property="Text" Value="{Binding Format, StringFormat='🖼️ Image ({0})'}"/>
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
@@ -156,7 +159,7 @@
                                     <Run Text=" • "/>
                                     <Run Text="{Binding ContentType}"/>
                                     <Run Text=" • "/>
-                                    <Run Text="{Binding CreatedAt}"/>
+                                    <Run Text="{Binding CreatedAt, Converter={StaticResource UnixTimestampConverter}}"/>
                                 </TextBlock>
                             </StackPanel>
 
@@ -166,7 +169,9 @@
                                    CornerRadius="{StaticResource SmallRadius}"
                                    Padding="8,4"
                                    VerticalAlignment="Center" 
-                                   Margin="12,0">
+                                   Margin="12,0"
+                                   BorderBrush="{StaticResource BorderLightColor}"
+                                   BorderThickness="1">
                                 <TextBlock Text="{Binding Format}" 
                                           FontSize="11" 
                                           Foreground="{StaticResource TextSecondaryColor}"
@@ -176,7 +181,7 @@
                             <!-- 复制按钮 -->
                             <Button Grid.Column="3" 
                                    Content="📋 Copy" 
-                                   Padding="12,8" 
+                                   Padding="12,6" 
                                    Margin="8,0,0,0"
                                    VerticalAlignment="Center"
                                    Tag="{Binding}"

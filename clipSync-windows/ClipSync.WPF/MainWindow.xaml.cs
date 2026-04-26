@@ -199,6 +199,31 @@ namespace ClipSync.WPF
             MainContent.Visibility = Visibility.Collapsed;
         }
 
+        private void MinimizeButton_Click(object sender, RoutedEventArgs e)
+        {
+            WindowState = WindowState.Minimized;
+        }
+
+        private void MaximizeButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (WindowState == WindowState.Maximized)
+                WindowState = WindowState.Normal;
+            else
+                WindowState = WindowState.Maximized;
+        }
+
+        private void CloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_settingsManager.Settings.MinimizeToTray)
+            {
+                Hide();
+            }
+            else
+            {
+                Application.Current.Shutdown();
+            }
+        }
+
         private async System.Threading.Tasks.Task LoadHistoryAsync()
         {
             var items = await _syncEngine.GetLocalHistoryAsync(50);

@@ -198,7 +198,22 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request, upgrader w
 	client.authTimer = time.AfterFunc(30*time.Second, func() {
 		if !client.Authed {
 			log.Printf("[WS] Client %s auth timeout, disconnecting", client.ID)
-			sendError(conn, "AUTH_TIMEOUT", "Authentication required within 30 seconds")
+			// Send error via channel to avoid concurrent write panic
+			errMsg := protocol.WSMessage{
+				Type:      protocol.TypeError,
+				Version:   protocol.Version,
+				Timestamp: protocol.NowMillis(),
+				Payload: protocol.ErrorPayload{
+					Code:    "AUTH_TIMEOUT",
+					Message: "Authentication required within 30 seconds",
+				},
+			}
+			if data, err := json.Marshal(errMsg); err == nil {
+				select {
+				case client.Send <- data:
+				default:
+				}
+			}
 			conn.Close()
 		}
 	})
@@ -211,19 +226,4 @@ func generateClientID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return "ws-" + hex.EncodeToString(b)
-}
-
-// sendError sends an error message to a WebSocket connection.
-func sendError(conn *websocket.Conn, code, message string) {
-	msg := protocol.WSMessage{
-		Type:      protocol.TypeError,
-		Version:   protocol.Version,
-		Timestamp: protocol.NowMillis(),
-		Payload: protocol.ErrorPayload{
-			Code:    code,
-			Message: message,
-		},
-	}
-	data, _ := json.Marshal(msg)
-	conn.WriteMessage(websocket.TextMessage, data)
 }

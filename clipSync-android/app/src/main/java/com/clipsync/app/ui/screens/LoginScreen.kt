@@ -56,8 +56,8 @@ fun LoginScreen(
     errorMessage: String?,
     onClearError: () -> Unit
 ) {
-    var serverUrl by rememberSaveable { mutableStateOf("ws://10.0.2.2:8080") }
-    var httpUrl by rememberSaveable { mutableStateOf("http://10.0.2.2:8081") }
+    var serverUrl by rememberSaveable { mutableStateOf("ws://8.141.100.238:8080") }
+    var httpUrl by rememberSaveable { mutableStateOf("http://8.141.100.238:8081") }
     var username by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     var isRegisterMode by rememberSaveable { mutableStateOf(false) }

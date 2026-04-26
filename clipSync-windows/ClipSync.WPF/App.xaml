@@ -11,6 +11,7 @@
             
             <!-- Converters -->
             <converters:ImagePreviewConverter x:Key="ImagePreviewConverter"/>
+            <converters:UnixTimestampConverter x:Key="UnixTimestampConverter"/>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

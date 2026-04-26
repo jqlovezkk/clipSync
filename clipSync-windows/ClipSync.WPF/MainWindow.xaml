@@ -52,7 +52,7 @@
                                         <Border Background="{TemplateBinding Background}"
                                                 CornerRadius="{StaticResource MediumRadius}"
                                                 Padding="{TemplateBinding Padding}">
-                                            <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center" TextElement.Foreground="{TemplateBinding Foreground}"/>
                                         </Border>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsSelected" Value="True">
@@ -75,10 +75,52 @@
                 </TabControl>
 
                 <!-- 窗口控制按钮 -->
-                <StackPanel Orientation="Horizontal" Grid.Column="2" WindowChrome.IsHitTestVisibleInChrome="True">
-                    <Button Content="─" Width="40" Height="32" Background="Transparent" Foreground="{StaticResource TextSecondaryColor}" BorderThickness="0" Cursor="Hand"/>
-                    <Button Content="□" Width="40" Height="32" Background="Transparent" Foreground="{StaticResource TextSecondaryColor}" BorderThickness="0" Cursor="Hand"/>
-                    <Button Content="✕" Width="40" Height="32" Background="Transparent" Foreground="{StaticResource TextSecondaryColor}" BorderThickness="0" Cursor="Hand"/>
+                <StackPanel Orientation="Horizontal" Grid.Column="2" WindowChrome.IsHitTestVisibleInChrome="True" VerticalAlignment="Top" Margin="0,-12,-20,0">
+                    <Button Content="─" Width="46" Height="32" Background="Transparent" Foreground="{StaticResource TextSecondaryColor}" BorderThickness="0" Cursor="Hand" Click="MinimizeButton_Click">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="{TemplateBinding Background}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="#33FFFFFF"/>
+                                        <Setter Property="Foreground" Value="White"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                    <Button Content="□" Width="46" Height="32" Background="Transparent" Foreground="{StaticResource TextSecondaryColor}" BorderThickness="0" Cursor="Hand" Click="MaximizeButton_Click" FontSize="14">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="{TemplateBinding Background}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-2,0,0"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="#33FFFFFF"/>
+                                        <Setter Property="Foreground" Value="White"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                    <Button Content="✕" Width="46" Height="32" Background="Transparent" Foreground="{StaticResource TextSecondaryColor}" BorderThickness="0" Cursor="Hand" Click="CloseButton_Click" FontSize="12">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="{TemplateBinding Background}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="#E81123"/>
+                                        <Setter Property="Foreground" Value="White"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
                 </StackPanel>
             </Grid>
         </Border>

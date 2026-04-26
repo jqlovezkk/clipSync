@@ -34,10 +34,19 @@ class SettingsManager(private val context: Context) {
     private val defaultWsUrl = "ws://8.141.100.238:8080"
     private val defaultHttpUrl = "http://8.141.100.238:8081"
 
+    // Old local IPs that should be migrated
+    private val oldLocalIps = listOf("10.0.2.2", "localhost", "127.0.0.1", "0.0.0.0")
+
     // ─── Server URL ───
 
     val serverUrlFlow: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[SERVER_URL_KEY] ?: defaultWsUrl
+        val url = prefs[SERVER_URL_KEY] ?: defaultWsUrl
+        // Auto-migrate old local IPs to new public IP
+        if (oldLocalIps.any { url.contains(it) }) {
+            url.replace(Regex("ws://[^/]+"), "ws://8.141.100.238")
+        } else {
+            url
+        }
     }
 
     suspend fun getServerUrl(): String = serverUrlFlow.first()
@@ -51,7 +60,13 @@ class SettingsManager(private val context: Context) {
     // ─── HTTP URL ───
 
     val httpUrlFlow: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[HTTP_URL_KEY] ?: defaultHttpUrl
+        val url = prefs[HTTP_URL_KEY] ?: defaultHttpUrl
+        // Auto-migrate old local IPs to new public IP
+        if (oldLocalIps.any { url.contains(it) }) {
+            url.replace(Regex("http://[^/]+"), "http://8.141.100.238")
+        } else {
+            url
+        }
     }
 
     suspend fun getHttpUrl(): String = httpUrlFlow.first()
