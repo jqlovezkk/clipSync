@@ -333,6 +333,11 @@ namespace ClipSync.WPF.Core
             var code = GetString(message.Payload, "code", "UNKNOWN");
             var msg = GetString(message.Payload, "message");
             AppLogger.Warn("SyncEngine", $"收到服务端错误: code={code}, message={msg}");
+            if (code == "DUPLICATE_CONTENT")
+            {
+                AppLogger.Info("SyncEngine", "检测到重复剪贴板内容，已静默忽略");
+                return;
+            }
             if (code == "AUTH_FAILED")
             {
                 ConnectionStateChanged?.Invoke("auth_failed");

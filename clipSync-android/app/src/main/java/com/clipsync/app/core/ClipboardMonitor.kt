@@ -62,6 +62,7 @@ class ClipboardMonitor(context: Context) {
     var maxContentSizeBytes: Int = DEFAULT_MAX_CONTENT_SIZE
 
     private val primaryClipChangedListener = ClipboardManager.OnPrimaryClipChangedListener {
+        Log.d(TAG, ">>> Clipboard change detected!")
         checkClipboard()
     }
 
@@ -69,17 +70,28 @@ class ClipboardMonitor(context: Context) {
      * Start monitoring the clipboard.
      */
     fun start() {
-        clipboardManager.addPrimaryClipChangedListener(primaryClipChangedListener)
-        // Check initial clipboard content
+        Log.d(TAG, "start() called - attempting to register clipboard listener")
+        try {
+            clipboardManager.addPrimaryClipChangedListener(primaryClipChangedListener)
+            Log.d(TAG, "addPrimaryClipChangedListener SUCCESS - clipboard changes will be monitored")
+        } catch (e: Exception) {
+            Log.e(TAG, "addPrimaryClipChangedListener FAILED", e)
+        }
         checkClipboard()
-        Log.d(TAG, "Clipboard monitoring started")
+        Log.d(TAG, "Clipboard monitoring STARTED")
     }
 
     /**
      * Stop monitoring the clipboard.
      */
     fun stop() {
-        clipboardManager.removePrimaryClipChangedListener(primaryClipChangedListener)
+        Log.d(TAG, "stop() called, removing listener...")
+        try {
+            clipboardManager.removePrimaryClipChangedListener(primaryClipChangedListener)
+            Log.d(TAG, "Listener removed successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to remove clipboard listener", e)
+        }
         Log.d(TAG, "Clipboard monitoring stopped")
     }
 
@@ -124,13 +136,18 @@ class ClipboardMonitor(context: Context) {
         try {
             val clipData = clipboardManager.primaryClip
             if (clipData == null || clipData.itemCount == 0) {
+                Log.d(TAG, "checkClipboard: primaryClip is null or empty")
                 return
             }
 
             val description = clipboardManager.primaryClipDescription
             if (description == null) {
+                Log.d(TAG, "checkClipboard: primaryClipDescription is null")
                 return
             }
+
+            val mimeTypes = description.filterMimeTypes("*")?.joinToString() ?: "unknown"
+            Log.d(TAG, "checkClipboard: found content, mimeTypes=$mimeTypes")
 
             // Check if clipboard contains image
             if (description.hasMimeType("image/*")) {
@@ -138,9 +155,13 @@ class ClipboardMonitor(context: Context) {
             } else if (description.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN) ||
                        description.hasMimeType(ClipDescription.MIMETYPE_TEXT_HTML)) {
                 extractTextContent(clipData)
+            } else {
+                Log.d(TAG, "checkClipboard: unsupported mime types ($mimeTypes), skipping")
             }
         } catch (e: SecurityException) {
-            Log.e(TAG, "Cannot access clipboard", e)
+            Log.e(TAG, "Cannot access clipboard (background restriction?): ${e.message}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Unexpected error checking clipboard", e)
         }
     }
 

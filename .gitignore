@@ -30,6 +30,7 @@ clipSync-server/**/*.exe
 server.exe
 clipsync-server.exe
 *.zip
+*-src.tar.gz
 
 # Secrets & Config
 .clipsync_secret

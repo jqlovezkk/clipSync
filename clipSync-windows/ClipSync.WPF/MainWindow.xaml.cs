@@ -436,6 +436,11 @@ namespace ClipSync.WPF
         {
             Dispatcher.Invoke(() =>
             {
+                if (!EnsureDevicesViewReady())
+                {
+                    return;
+                }
+
                 _isDeviceListRequestInFlight = false;
                 _deviceCount = devices.Count;
 
@@ -449,7 +454,14 @@ namespace ClipSync.WPF
                     _deviceListPanel.Children.Clear();
                     foreach (var device in displayItems)
                     {
-                        _deviceListPanel.Children.Add(CreateDeviceCard(device));
+                        try
+                        {
+                            _deviceListPanel.Children.Add(CreateDeviceCard(device));
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLogger.Error("MainWindow", $"创建设备卡片失败: device_id={device.DeviceId}", ex);
+                        }
                     }
 
                     if (_deviceEmptyState != null)
@@ -633,19 +645,24 @@ namespace ClipSync.WPF
             switch (header)
             {
                 case "Home":
-                    TabContent.Content = _homeView;
+                    SetTabContent(header, _homeView);
                     UpdateHomeSummary();
                     break;
                 case "History":
-                    TabContent.Content = _historyView;
+                    SetTabContent(header, _historyView);
                     _ = LoadHistoryAsync();
                     break;
                 case "Devices":
-                    TabContent.Content = _devicesView;
+                    if (!EnsureDevicesViewReady())
+                    {
+                        return;
+                    }
+
+                    SetTabContent(header, _devicesView);
                     _ = RefreshDeviceListAsync();
                     break;
                 case "Settings":
-                    TabContent.Content = _settingsView;
+                    SetTabContent(header, _settingsView);
                     LoadSettingsView();
                     break;
             }
@@ -653,6 +670,11 @@ namespace ClipSync.WPF
 
         private async Task RefreshDeviceListAsync(bool force = false)
         {
+            if (!EnsureDevicesViewReady())
+            {
+                return;
+            }
+
             if (_isDeviceListRequestInFlight && !force)
             {
                 AppLogger.Info("MainWindow", "设备列表请求仍在进行中，跳过重复请求");
@@ -843,6 +865,29 @@ namespace ClipSync.WPF
         private Brush GetBrush(string resourceKey)
         {
             return (Brush)FindResource(resourceKey);
+        }
+
+        private void SetTabContent(string header, object? view)
+        {
+            if (view == null)
+            {
+                AppLogger.Warn("MainWindow", $"切换标签页失败，视图未初始化: tab={header}");
+                TabContent.Content = null;
+                return;
+            }
+
+            TabContent.Content = view;
+        }
+
+        private bool EnsureDevicesViewReady()
+        {
+            if (_devicesView == null || _deviceListPanel == null || _deviceListStateText == null || _deviceEmptyState == null)
+            {
+                AppLogger.Warn("MainWindow", "设备页控件尚未完成初始化，跳过本次设备页更新");
+                return false;
+            }
+
+            return true;
         }
 
         private string FormatLastSeen(long unixMilliseconds)

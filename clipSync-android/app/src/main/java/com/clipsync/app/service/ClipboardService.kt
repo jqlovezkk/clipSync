@@ -272,10 +272,13 @@ class ClipboardService : Service() {
     }
 
     private fun setupClipboardMonitoring() {
+        Log.d(TAG, "Setting up clipboard monitoring")
         // Monitor text changes
         serviceScope.launch {
             clipboardMonitor.currentText.collectLatest { text ->
+                Log.d(TAG, "Clipboard text flow: text=${text?.take(30)}, isMonitoring=$isMonitoring")
                 if (text != null && isMonitoring) {
+                    Log.d(TAG, "Pushing text to server: ${text.take(30)}...")
                     syncEngine.pushToServer(text)
                 }
             }
@@ -284,6 +287,7 @@ class ClipboardService : Service() {
         // Monitor image changes
         serviceScope.launch {
             clipboardMonitor.currentContent.collectLatest { content ->
+                Log.d(TAG, "Clipboard content flow: type=${content?.contentType}, isMonitoring=$isMonitoring")
                 if (content != null && isMonitoring) {
                     when (content.contentType) {
                         ClipboardContentType.TEXT -> {
@@ -291,6 +295,7 @@ class ClipboardService : Service() {
                         }
                         ClipboardContentType.IMAGE -> {
                             content.imageBase64?.let { base64 ->
+                                Log.d(TAG, "Pushing image to server: ${content.sizeBytes} bytes")
                                 syncEngine.pushImageToServer(
                                     imageBase64 = base64,
                                     format = content.imageFormat,
@@ -307,10 +312,13 @@ class ClipboardService : Service() {
     }
 
     private fun startClipboardMonitoring() {
+        Log.d(TAG, "startClipboardMonitoring() called, current isMonitoring=$isMonitoring")
         if (!isMonitoring) {
             clipboardMonitor.start()
             isMonitoring = true
-            Log.d(TAG, "Clipboard monitoring started in service")
+            Log.d(TAG, "Clipboard monitoring STARTED in service, isMonitoring=$isMonitoring")
+        } else {
+            Log.d(TAG, "Clipboard monitoring already active, skipping")
         }
     }
 
