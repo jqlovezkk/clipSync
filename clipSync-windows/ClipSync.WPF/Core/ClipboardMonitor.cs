@@ -26,7 +26,8 @@ namespace ClipSync.WPF.Core
     public class ClipboardMonitor : IDisposable
     {
         private readonly Action<ClipboardChangedEventArgs> _onClipboardChanged;
-        private string _lastChecksum = "";
+        private string _lastObservedChecksum = "";
+        private string _suppressedChecksum = "";
         private bool _isDisposed;
         private Thread? _monitorThread;
         private volatile bool _isRunning;
@@ -73,9 +74,21 @@ namespace ClipSync.WPF.Core
                     }
 
                     var args = ReadClipboardContent();
-                    if (args != null && !string.IsNullOrEmpty(args.Checksum) && args.Checksum != _lastChecksum)
+                    if (args != null && !string.IsNullOrEmpty(args.Checksum))
                     {
-                        _lastChecksum = args.Checksum;
+                        if (args.Checksum == _lastObservedChecksum)
+                        {
+                            continue;
+                        }
+
+                        _lastObservedChecksum = args.Checksum;
+
+                        if (args.Checksum == _suppressedChecksum)
+                        {
+                            _suppressedChecksum = "";
+                            continue;
+                        }
+
                         _onClipboardChanged(args);
                     }
                 }
@@ -152,9 +165,10 @@ namespace ClipSync.WPF.Core
             }
         }
 
-        public void SetLastChecksum(string checksum)
+        public void SuppressNextChange(string checksum)
         {
-            _lastChecksum = checksum;
+            _suppressedChecksum = checksum;
+            _lastObservedChecksum = checksum;
         }
 
         public void Dispose()

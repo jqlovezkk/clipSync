@@ -161,17 +161,9 @@ func (c *Client) handleClipboardPush(msg protocol.WSMessage) {
 		return
 	}
 
-	// Check for duplicate checksum
-	if pushPayload.Checksum != "" {
-		isDup, err := c.Hub.clipRepo.CheckDuplicateChecksum(c.UserID, pushPayload.Checksum)
-		if err != nil {
-			log.Printf("[WS] Error checking duplicate: %v", err)
-		}
-		if isDup {
-			log.Printf("[WS] Duplicate clipboard ignored: user_id=%d device_id=%s checksum=%s", c.UserID, c.DeviceID, pushPayload.Checksum)
-			return
-		}
-	}
+	// Allow intentional re-sends of the same content, such as re-copying from history.
+	// Clipboard loop suppression is handled client-side, so checksum-based server drops
+	// would incorrectly block legitimate user actions.
 
 	// Store in database
 	entry, err := c.Hub.clipRepo.AddEntry(

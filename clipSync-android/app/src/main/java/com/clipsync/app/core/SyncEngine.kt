@@ -5,6 +5,7 @@ import com.clipsync.app.data.entities.ClipboardEntity
 import com.clipsync.app.network.WsMessage
 import com.clipsync.app.network.WsMessageBuilder
 import com.clipsync.app.network.WebSocketClient
+import android.util.Base64
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -38,8 +39,8 @@ class SyncEngine(
 
     private var lastSentChecksum: String? = null
 
-    /** Maximum content size for sync: 512KB */
-    private val maxContentSizeBytes = 512 * 1024
+    private val maxTextSizeBytes = 100 * 1024
+    private val maxImageSizeBytes = 5 * 1024 * 1024
 
     /**
      * Initialize the sync engine.
@@ -73,7 +74,7 @@ class SyncEngine(
     /**
      * Push local clipboard content (text) to server.
      */
-    fun pushToServer(content: String) {
+    fun pushToServer(content: String, force: Boolean = false) {
         scope.launch {
             if (isDestroyed) return@launch
             val syncEnabled = settingsManager.isSyncEnabled()
@@ -89,18 +90,19 @@ class SyncEngine(
 
             // Check content size to prevent OOM
             val contentSizeBytes = content.toByteArray(Charsets.UTF_8).size
-            if (contentSizeBytes > maxContentSizeBytes) {
+            if (contentSizeBytes > maxTextSizeBytes) {
                 FileLogger.w(TAG, "Content too large (${contentSizeBytes} bytes), skipping push")
                 return@launch
             }
 
             // Deduplication: skip if same content was just sent
             val checksum = EncryptionHelper.calculateChecksum(content)
-            if (checksum == lastSentChecksum) {
+            if (!force && checksum == lastSentChecksum) {
                 FileLogger.d(TAG, "Duplicate content, skipping push")
                 return@launch
             }
             lastSentChecksum = checksum
+            FileLogger.d(TAG, "Push pipeline: text accepted for send, checksum=$checksum, force=$force")
 
             val encryptionEnabled = settingsManager.isEncryptionEnabled()
             val contentToSend = if (encryptionEnabled) {
@@ -129,11 +131,11 @@ class SyncEngine(
 
             val sent = webSocketClient.send(messageWithDevice)
             if (sent) {
-                FileLogger.d(TAG, "Pushed text to server (${content.length} chars)")
+                FileLogger.d(TAG, "Push pipeline: text sent to server (${content.length} chars)")
                 // Save to local history
                 saveToHistory(content, "text", checksum, deviceId)
             } else {
-                FileLogger.w(TAG, "Failed to push to server")
+                FileLogger.w(TAG, "Push pipeline: failed to push text to server")
             }
         }
     }
@@ -141,7 +143,13 @@ class SyncEngine(
     /**
      * Push local clipboard image to server.
      */
-    fun pushImageToServer(imageBase64: String, format: String, size: Int, checksum: String) {
+    fun pushImageToServer(
+        imageBase64: String,
+        format: String,
+        size: Int,
+        checksum: String,
+        force: Boolean = false
+    ) {
         scope.launch {
             if (isDestroyed) return@launch
             val syncEnabled = settingsManager.isSyncEnabled()
@@ -156,17 +164,18 @@ class SyncEngine(
             }
 
             // Check content size
-            if (size > maxContentSizeBytes) {
+            if (size > maxImageSizeBytes) {
                 FileLogger.w(TAG, "Image too large (${size} bytes), skipping push")
                 return@launch
             }
 
             // Deduplication
-            if (checksum == lastSentChecksum) {
+            if (!force && checksum == lastSentChecksum) {
                 FileLogger.d(TAG, "Duplicate image, skipping push")
                 return@launch
             }
             lastSentChecksum = checksum
+            FileLogger.d(TAG, "Push pipeline: image accepted for send, checksum=$checksum, force=$force, size=$size")
 
             val encryptionEnabled = settingsManager.isEncryptionEnabled()
             val contentToSend = if (encryptionEnabled) {
@@ -193,10 +202,10 @@ class SyncEngine(
 
             val sent = webSocketClient.send(messageWithDevice)
             if (sent) {
-                FileLogger.d(TAG, "Pushed image to server ($size bytes, format=$format)")
+                FileLogger.d(TAG, "Push pipeline: image sent to server ($size bytes, format=$format)")
                 saveToHistory(imageBase64, "image", checksum, deviceId)
             } else {
-                FileLogger.w(TAG, "Failed to push image to server")
+                FileLogger.w(TAG, "Push pipeline: failed to push image to server")
             }
         }
     }
@@ -258,10 +267,12 @@ class SyncEngine(
 
                 when (contentType) {
                     "text" -> {
+                        FileLogger.d(TAG, "Receive pipeline: applying remote text to Android clipboard")
                         clipboardMonitor.setTextToClipboard(decryptedContent)
                         FileLogger.d(TAG, "Synced text from $sourceDeviceName: ${decryptedContent.take(50)}...")
                     }
                     "image" -> {
+                        FileLogger.d(TAG, "Receive pipeline: applying remote image to Android clipboard")
                         clipboardMonitor.setImageToClipboard(decryptedContent)
                         FileLogger.d(TAG, "Synced image from $sourceDeviceName (${decryptedContent.length} chars base64)")
                     }
@@ -292,12 +303,15 @@ class SyncEngine(
                 val obj = item as? JsonObject ?: return@mapNotNull null
                 val content = obj["content"]?.jsonPrimitive?.content ?: return@mapNotNull null
                 // Skip items with content too large
-                if (content.length > maxContentSizeBytes) return@mapNotNull null
                 val checksum = obj["checksum"]?.jsonPrimitive?.content ?: ""
                 val sourceDeviceId = obj["source_device_id"]?.jsonPrimitive?.content ?: ""
                 val sourceDeviceName = obj["source_device_name"]?.jsonPrimitive?.content ?: ""
                 val createdAt = obj["created_at"]?.jsonPrimitive?.long ?: System.currentTimeMillis()
                 val contentType = obj["content_type"]?.jsonPrimitive?.content ?: "text"
+
+                if (!isWithinContentLimit(content, contentType)) {
+                    return@mapNotNull null
+                }
 
                 ClipboardEntity(
                     content = content,
@@ -336,7 +350,7 @@ class SyncEngine(
     ) {
         scope.launch {
             // Skip saving if content is too large
-            if (content.toByteArray(Charsets.UTF_8).size > maxContentSizeBytes) {
+            if (!isWithinContentLimit(content, contentType)) {
                 FileLogger.w(TAG, "Content too large for history, skipping save")
                 return@launch
             }
@@ -368,6 +382,22 @@ class SyncEngine(
         isDestroyed = true
         scope.cancel()
         FileLogger.d(TAG, "SyncEngine destroyed")
+    }
+
+    private fun isWithinContentLimit(content: String, contentType: String): Boolean {
+        return when (contentType) {
+            "image" -> estimateImageBytes(content) <= maxImageSizeBytes
+            else -> content.toByteArray(Charsets.UTF_8).size <= maxTextSizeBytes
+        }
+    }
+
+    private fun estimateImageBytes(base64Content: String): Int {
+        return runCatching {
+            Base64.decode(base64Content, Base64.DEFAULT).size
+        }.getOrElse {
+            FileLogger.w(TAG, "Failed to decode image content while checking size, treating as oversized")
+            Int.MAX_VALUE
+        }
     }
 
     companion object {

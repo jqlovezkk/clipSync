@@ -162,8 +162,9 @@ class WebSocketClient {
     companion object {
         private const val TAG = "WebSocketClient"
         private const val NORMAL_CLOSE_CODE = 1000
-        private const val MAX_MESSAGE_CHARS = 1 * 1024 * 1024 // 1MB max text message
-        private const val MAX_MESSAGE_BYTES = 1 * 1024 * 1024 // 1MB max binary message
+        // 5MB raw image payload becomes ~6.7MB after Base64, plus JSON envelope.
+        private const val MAX_MESSAGE_CHARS = 8 * 1024 * 1024
+        private const val MAX_MESSAGE_BYTES = 8 * 1024 * 1024
     }
 }
 

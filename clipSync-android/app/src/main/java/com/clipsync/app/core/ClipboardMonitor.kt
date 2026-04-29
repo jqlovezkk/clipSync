@@ -56,9 +56,14 @@ class ClipboardMonitor(context: Context) {
 
     private var lastContent: String? = null
     private var lastImageChecksum: String? = null
+    private var hasLoggedBackgroundAccessRestriction = false
+    private var pendingReadContext: ClipboardReadContext = ClipboardReadContext.PassiveMonitor
 
-    /** Maximum clipboard content size: 512KB */
-    var maxContentSizeBytes: Int = DEFAULT_MAX_CONTENT_SIZE
+    /** Maximum clipboard text size: 100KB */
+    var maxTextSizeBytes: Int = DEFAULT_MAX_TEXT_SIZE
+
+    /** Maximum clipboard image size: 5MB */
+    var maxImageSizeBytes: Int = DEFAULT_MAX_IMAGE_SIZE
 
     private val primaryClipChangedListener = ClipboardManager.OnPrimaryClipChangedListener {
         FileLogger.d(TAG, ">>> Clipboard change detected!")
@@ -78,6 +83,16 @@ class ClipboardMonitor(context: Context) {
         }
         checkClipboard()
         FileLogger.d(TAG, "Clipboard monitoring STARTED")
+    }
+
+    /**
+     * Explicitly re-read the current clipboard.
+     * Useful when the app returns to foreground and background clipboard reads become allowed again.
+     */
+    fun refreshNow() {
+        FileLogger.d(TAG, "refreshNow() called")
+        pendingReadContext = ClipboardReadContext.ForegroundCatchUp
+        checkClipboard()
     }
 
     /**
@@ -106,7 +121,7 @@ class ClipboardMonitor(context: Context) {
                 null
             }
         } catch (e: SecurityException) {
-            FileLogger.e(TAG, "Cannot access clipboard", e)
+            logBackgroundAccessRestrictionOnce(ClipboardReadContext.PassiveMonitor, e)
             null
         }
     }
@@ -119,6 +134,7 @@ class ClipboardMonitor(context: Context) {
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             try {
                 lastContent = text // Prevent echo loop
+                pendingReadContext = ClipboardReadContext.AfterRemoteWrite
                 val clip = ClipData.newPlainText("ClipSync", text)
                 clipboardManager.setPrimaryClip(clip)
                 // Do not emit here: observers treat StateFlow changes as local user copies.
@@ -132,21 +148,23 @@ class ClipboardMonitor(context: Context) {
     }
 
     private fun checkClipboard() {
+        val readContext = pendingReadContext
+        pendingReadContext = ClipboardReadContext.PassiveMonitor
         try {
             val clipData = clipboardManager.primaryClip
             if (clipData == null || clipData.itemCount == 0) {
-                FileLogger.d(TAG, "checkClipboard: primaryClip is null or empty")
+                FileLogger.d(TAG, "checkClipboard[$readContext]: primaryClip is null or empty")
                 return
             }
 
             val description = clipboardManager.primaryClipDescription
             if (description == null) {
-                FileLogger.d(TAG, "checkClipboard: primaryClipDescription is null")
+                FileLogger.d(TAG, "checkClipboard[$readContext]: primaryClipDescription is null")
                 return
             }
 
             val mimeTypes = description.filterMimeTypes("*")?.joinToString() ?: "unknown"
-            FileLogger.d(TAG, "checkClipboard: found content, mimeTypes=$mimeTypes")
+            FileLogger.d(TAG, "checkClipboard[$readContext]: found content, mimeTypes=$mimeTypes")
 
             // Check if clipboard contains image
             if (description.hasMimeType("image/*")) {
@@ -155,12 +173,12 @@ class ClipboardMonitor(context: Context) {
                        description.hasMimeType(ClipDescription.MIMETYPE_TEXT_HTML)) {
                 extractTextContent(clipData)
             } else {
-                FileLogger.d(TAG, "checkClipboard: unsupported mime types ($mimeTypes), skipping")
+                FileLogger.d(TAG, "checkClipboard[$readContext]: unsupported mime types ($mimeTypes), skipping")
             }
         } catch (e: SecurityException) {
-            FileLogger.e(TAG, "Cannot access clipboard (background restriction?): ${e.message}")
+            logBackgroundAccessRestrictionOnce(readContext, e)
         } catch (e: Exception) {
-            FileLogger.e(TAG, "Unexpected error checking clipboard", e)
+            FileLogger.e(TAG, "Unexpected error checking clipboard [$readContext]", e)
         }
     }
 
@@ -168,7 +186,7 @@ class ClipboardMonitor(context: Context) {
         val text = clipData.getItemAt(0).coerceToText(null)?.toString()
         if (!text.isNullOrEmpty() && text != lastContent) {
             val sizeBytes = text.toByteArray(Charsets.UTF_8).size
-            if (sizeBytes > maxContentSizeBytes) {
+            if (sizeBytes > maxTextSizeBytes) {
                 FileLogger.w(TAG, "Clipboard text too large (${sizeBytes} bytes), skipping")
                 return
             }
@@ -207,7 +225,7 @@ class ClipboardMonitor(context: Context) {
 
             val imageBytes = inputStream.use { it.readBytes() }
 
-            if (imageBytes.isEmpty() || imageBytes.size > maxContentSizeBytes) {
+            if (imageBytes.isEmpty() || imageBytes.size > maxImageSizeBytes) {
                 FileLogger.w(TAG, "Image size invalid: ${imageBytes.size} bytes")
                 return
             }
@@ -268,6 +286,7 @@ class ClipboardMonitor(context: Context) {
                 }
 
                 lastImageChecksum = EncryptionHelper.computeChecksum(imageBytes)
+                pendingReadContext = ClipboardReadContext.AfterRemoteWrite
 
                 // Save bitmap to temporary file
                 val cacheDir = appContext.cacheDir
@@ -306,8 +325,42 @@ class ClipboardMonitor(context: Context) {
         lastImageChecksum = null
     }
 
+    fun markNextReadFromInAppCopy() {
+        pendingReadContext = ClipboardReadContext.InAppCopy
+    }
+
+    private fun logBackgroundAccessRestrictionOnce(
+        context: ClipboardReadContext,
+        exception: SecurityException
+    ) {
+        val detail = when (context) {
+            ClipboardReadContext.AfterRemoteWrite ->
+                "后台回读剪贴板被系统拦截，但这是远端写入后的校验读，通常不影响 Win -> Android 接收"
+            ClipboardReadContext.InAppCopy ->
+                "App 内复制后的回读被系统拦截；如果显式推送已成功，这条通常不是主因"
+            ClipboardReadContext.ForegroundCatchUp ->
+                "前台补抓当前剪贴板时被系统拦截，说明当前时机仍拿不到系统剪贴板"
+            ClipboardReadContext.PassiveMonitor ->
+                "后台监听系统剪贴板被拦截，这会直接阻断 Android -> 远端 的自动发送"
+        }
+        if (!hasLoggedBackgroundAccessRestriction) {
+            hasLoggedBackgroundAccessRestriction = true
+            FileLogger.w(TAG, "Clipboard read blocked [$context]: $detail | ${exception.message}")
+        } else {
+            FileLogger.d(TAG, "Clipboard read blocked [$context]: $detail")
+        }
+    }
+
     companion object {
         private const val TAG = "ClipboardMonitor"
-        private const val DEFAULT_MAX_CONTENT_SIZE = 512 * 1024 // 512KB
+        private const val DEFAULT_MAX_TEXT_SIZE = 100 * 1024
+        private const val DEFAULT_MAX_IMAGE_SIZE = 5 * 1024 * 1024
     }
+}
+
+private enum class ClipboardReadContext {
+    PassiveMonitor,
+    ForegroundCatchUp,
+    AfterRemoteWrite,
+    InAppCopy
 }

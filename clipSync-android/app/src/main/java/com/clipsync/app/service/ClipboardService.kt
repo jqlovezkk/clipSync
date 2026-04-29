@@ -12,6 +12,7 @@ import android.os.IBinder
 import com.clipsync.app.core.FileLogger
 import com.clipsync.app.core.ClipboardContentType
 import com.clipsync.app.core.ClipboardMonitor
+import com.clipsync.app.core.EncryptionHelper
 import com.clipsync.app.core.SettingsManager
 import com.clipsync.app.core.SyncEngine
 import com.clipsync.app.core.SyncStatus
@@ -253,6 +254,9 @@ class ClipboardService : Service() {
     }
 
     private fun handleClipboardSync(payload: JsonObject) {
+        val sourceDeviceName = payload["source_device_name"]?.jsonPrimitive?.content ?: "Unknown device"
+        val contentType = payload["content_type"]?.jsonPrimitive?.content ?: "text"
+        FileLogger.d(TAG, "Incoming clipboard_sync from $sourceDeviceName, type=$contentType")
         syncEngine.handleIncomingSync(payload)
     }
 
@@ -278,7 +282,7 @@ class ClipboardService : Service() {
             clipboardMonitor.currentText.collectLatest { text ->
                 FileLogger.d(TAG, "Clipboard text flow: text=${text?.take(30)}, isMonitoring=$isMonitoring")
                 if (text != null && isMonitoring) {
-                    FileLogger.d(TAG, "Pushing text to server: ${text.take(30)}...")
+                    FileLogger.d(TAG, "Push pipeline: observed local clipboard text, preparing send")
                     syncEngine.pushToServer(text)
                 }
             }
@@ -295,7 +299,7 @@ class ClipboardService : Service() {
                         }
                         ClipboardContentType.IMAGE -> {
                             content.imageBase64?.let { base64 ->
-                                FileLogger.d(TAG, "Pushing image to server: ${content.sizeBytes} bytes")
+                                FileLogger.d(TAG, "Push pipeline: observed local clipboard image, preparing send (${content.sizeBytes} bytes)")
                                 syncEngine.pushImageToServer(
                                     imageBase64 = base64,
                                     format = content.imageFormat,
@@ -349,6 +353,47 @@ class ClipboardService : Service() {
             webSocketClient.send(WsMessageBuilder.deviceList())
         } else {
             FileLogger.w(TAG, "Cannot request device list: WebSocket not connected")
+        }
+    }
+
+    /**
+     * Retry reading the current clipboard while the app is foregrounded.
+     * Android blocks background clipboard reads, so we do a catch-up refresh on resume.
+     */
+    fun refreshClipboardNow() {
+        if (!isMonitoring) {
+            FileLogger.d(TAG, "Skipping clipboard refresh because monitoring is not active yet")
+            return
+        }
+        FileLogger.d(TAG, "Refreshing clipboard from foreground context")
+        clipboardMonitor.refreshNow()
+    }
+
+    /**
+     * Push clipboard content that was explicitly copied from inside the app UI.
+     * This bypasses passive clipboard listener timing and allows intentional re-sends.
+     */
+    fun pushClipboardContentNow(content: String, contentType: String) {
+        FileLogger.d(TAG, "Push pipeline: explicit in-app copy requested, type=$contentType")
+        when (contentType) {
+            "image" -> {
+                val imageBytes = runCatching {
+                    android.util.Base64.decode(content, android.util.Base64.DEFAULT)
+                }.getOrElse {
+                    FileLogger.e(TAG, "Failed to decode image copied from app UI", it)
+                    return
+                }
+                syncEngine.pushImageToServer(
+                    imageBase64 = content,
+                    format = "image/png",
+                    size = imageBytes.size,
+                    checksum = EncryptionHelper.computeChecksum(imageBytes),
+                    force = true
+                )
+            }
+            else -> {
+                syncEngine.pushToServer(content, force = true)
+            }
         }
     }
 

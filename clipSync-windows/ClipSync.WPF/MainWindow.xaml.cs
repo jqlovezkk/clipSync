@@ -81,7 +81,7 @@ namespace ClipSync.WPF
             _historyView = new HistoryView();
             _historyView.RefreshRequested += async () => await LoadHistoryAsync();
             _historyView.ClearRequested += async () => await ClearHistoryAsync();
-            _historyView.CopyRequested += (item) =>
+            _historyView.CopyRequested += async (item) =>
             {
                 try
                 {
@@ -103,6 +103,8 @@ namespace ClipSync.WPF
                         bitmap.Freeze();
                         Clipboard.SetImage(bitmap);
                     }
+
+                    await _syncEngine.PushClipboardItemAsync(item);
                 }
                 catch (Exception ex)
                 {

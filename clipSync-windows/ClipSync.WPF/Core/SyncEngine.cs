@@ -123,25 +123,7 @@ namespace ClipSync.WPF.Core
             {
                 if (!_settingsManager.Settings.SyncEnabled) return;
                 if (_webSocketClient == null || !_webSocketClient.IsConnected) return;
-
-                var content = args.ContentType == ClipboardContentType.Text
-                    ? args.TextContent
-                    : Convert.ToBase64String(args.ImageContent ?? Array.Empty<byte>());
-
-                if (string.IsNullOrEmpty(content)) return;
-
-                var pushMessage = Protocol.CreateClipboardPushMessage(
-                    args.ContentType == ClipboardContentType.Text ? "text" : "image",
-                    content ?? "",
-                    args.Format,
-                    args.Size,
-                    args.Checksum,
-                    _settingsManager.Settings.EncryptionEnabled,
-                    _settingsManager.Settings.EncryptionPassword);
-
-                await _webSocketClient.SendAsync(pushMessage);
-
-                await SaveClipboardItemAsync(args, "local", _settingsManager.Settings.DeviceName);
+                await PublishClipboardChangedEventAsync(args);
             }
             catch (InvalidOperationException ex)
             {
@@ -235,7 +217,7 @@ namespace ClipSync.WPF.Core
 
             if (_clipboardMonitor != null)
             {
-                _clipboardMonitor.SetLastChecksum(checksum);
+                _clipboardMonitor.SuppressNextChange(checksum);
             }
 
             var decryptedContent = content;
@@ -456,6 +438,31 @@ namespace ClipSync.WPF.Core
             await _database.ClearHistoryAsync();
         }
 
+        public async Task PushClipboardItemAsync(Network.ClipboardItem item)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            var args = new ClipboardChangedEventArgs
+            {
+                ContentType = item.ContentType == "image" ? ClipboardContentType.Image : ClipboardContentType.Text,
+                TextContent = item.ContentType == "text" ? item.Content : null,
+                ImageContent = item.ContentType == "image" ? Convert.FromBase64String(item.Content) : null,
+                Format = item.Format,
+                Checksum = string.IsNullOrEmpty(item.Checksum) ? ComputeChecksum(item) : item.Checksum,
+                Size = item.Size > 0 ? item.Size : ComputeSize(item)
+            };
+
+            if (_clipboardMonitor != null && !string.IsNullOrEmpty(args.Checksum))
+            {
+                _clipboardMonitor.SuppressNextChange(args.Checksum);
+            }
+
+            await PublishClipboardChangedEventAsync(args);
+        }
+
         private async Task SaveClipboardItemAsync(ClipboardChangedEventArgs args, string sourceDeviceId, string sourceDeviceName)
         {
             if (_database == null) return;
@@ -473,6 +480,50 @@ namespace ClipSync.WPF.Core
             };
 
             await _database.InsertClipboardItemAsync(item);
+        }
+
+        private async Task PublishClipboardChangedEventAsync(ClipboardChangedEventArgs args)
+        {
+            var content = args.ContentType == ClipboardContentType.Text
+                ? args.TextContent
+                : Convert.ToBase64String(args.ImageContent ?? Array.Empty<byte>());
+
+            if (string.IsNullOrEmpty(content))
+            {
+                return;
+            }
+
+            var pushMessage = Protocol.CreateClipboardPushMessage(
+                args.ContentType == ClipboardContentType.Text ? "text" : "image",
+                content,
+                args.Format,
+                args.Size,
+                args.Checksum,
+                _settingsManager.Settings.EncryptionEnabled,
+                _settingsManager.Settings.EncryptionPassword);
+
+            await _webSocketClient!.SendAsync(pushMessage);
+            await SaveClipboardItemAsync(args, "local", _settingsManager.Settings.DeviceName);
+        }
+
+        private static string ComputeChecksum(Network.ClipboardItem item)
+        {
+            if (item.ContentType == "image")
+            {
+                return EncryptionHelper.ComputeChecksum(Convert.FromBase64String(item.Content));
+            }
+
+            return EncryptionHelper.ComputeChecksum(item.Content);
+        }
+
+        private static long ComputeSize(Network.ClipboardItem item)
+        {
+            if (item.ContentType == "image")
+            {
+                return Convert.FromBase64String(item.Content).LongLength;
+            }
+
+            return System.Text.Encoding.UTF8.GetByteCount(item.Content);
         }
 
         private static string GetString(JToken? token, string key, string defaultValue = "")

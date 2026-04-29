@@ -272,11 +272,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             when (entity.contentType) {
                 "image" -> {
                     FileLogger.d(TAG, "复制历史图片到剪贴板: id=$historyId, size=${entity.content.length}")
+                    clipboardMonitor.markNextReadFromInAppCopy()
                     clipboardMonitor.setImageToClipboard(entity.content)
+                    clipboardService?.pushClipboardContentNow(entity.content, "image")
                 }
                 else -> {
                     FileLogger.d(TAG, "复制历史文本到剪贴板: id=$historyId, length=${entity.content.length}")
+                    clipboardMonitor.markNextReadFromInAppCopy()
                     clipboardMonitor.setTextToClipboard(entity.content)
+                    clipboardService?.pushClipboardContentNow(entity.content, "text")
                 }
             }
         }
@@ -284,6 +288,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun requestDeviceList() {
         clipboardService?.requestDeviceList()
+    }
+
+    fun onAppForegrounded() {
+        FileLogger.d(TAG, "App moved to foreground, requesting clipboard catch-up refresh")
+        clipboardService?.refreshClipboardNow()
     }
 
     fun unregisterDevice(deviceId: String) {
