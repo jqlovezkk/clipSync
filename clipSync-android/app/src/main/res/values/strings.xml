@@ -33,6 +33,27 @@
     <string name="devices_unregister_confirm">Unregister this device?</string>
     <string name="notification_service_title">ClipSync Running</string>
     <string name="notification_service_text">Monitoring clipboard for sync</string>
+    <string name="ime_service_name">ClipSync Keyboard</string>
+    <string name="ime_subtype_en">English</string>
+    <string name="ime_status_connecting">Connecting</string>
+    <string name="ime_status_connected">Synced</string>
+    <string name="ime_status_disconnected">Offline</string>
+    <string name="ime_history_empty">No recent clips</string>
+    <string name="ime_panel_clipboard">Clipboard</string>
+    <string name="ime_panel_devices">Devices</string>
+    <string name="ime_panel_recent">Recent</string>
+    <string name="ime_panel_open">Clips</string>
+    <string name="ime_panel_keyboard">Keyboard</string>
+    <string name="ime_devices_empty">No synced devices</string>
+    <string name="ime_device_content_empty">No recent content</string>
+    <string name="ime_action_space">space</string>
+    <string name="ime_action_enter">enter</string>
+    <string name="ime_action_delete">del</string>
+    <string name="ime_action_shift">shift</string>
+    <string name="ime_action_symbols">#+=</string>
+    <string name="ime_action_numbers">123</string>
+    <string name="ime_action_letters">ABC</string>
+    <string name="ime_action_next_keyboard">globe</string>
     <string name="nav_home">Home</string>
     <string name="nav_history">History</string>
     <string name="nav_devices">Devices</string>
