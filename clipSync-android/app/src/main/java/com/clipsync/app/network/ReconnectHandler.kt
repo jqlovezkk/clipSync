@@ -1,6 +1,6 @@
 package com.clipsync.app.network
 
-import android.util.Log
+import com.clipsync.app.core.FileLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -40,7 +40,7 @@ class ReconnectHandler(
         if (reconnectJob?.isActive == true) return
 
         val delayMs = currentBackoffMs
-        Log.d(TAG, "Scheduling reconnect in ${delayMs}ms (attempt $consecutiveFailures)")
+        FileLogger.d(TAG, "Scheduling reconnect in ${delayMs}ms (attempt $consecutiveFailures)")
         onStateChange(ConnectionState.Error("Disconnected, retrying in ${delayMs / 1000}s"))
 
         reconnectJob = scope.launch {

@@ -8,7 +8,6 @@ import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
 import android.util.Base64
-import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -62,7 +61,7 @@ class ClipboardMonitor(context: Context) {
     var maxContentSizeBytes: Int = DEFAULT_MAX_CONTENT_SIZE
 
     private val primaryClipChangedListener = ClipboardManager.OnPrimaryClipChangedListener {
-        Log.d(TAG, ">>> Clipboard change detected!")
+        FileLogger.d(TAG, ">>> Clipboard change detected!")
         checkClipboard()
     }
 
@@ -70,29 +69,29 @@ class ClipboardMonitor(context: Context) {
      * Start monitoring the clipboard.
      */
     fun start() {
-        Log.d(TAG, "start() called - attempting to register clipboard listener")
+        FileLogger.d(TAG, "start() called - attempting to register clipboard listener")
         try {
             clipboardManager.addPrimaryClipChangedListener(primaryClipChangedListener)
-            Log.d(TAG, "addPrimaryClipChangedListener SUCCESS - clipboard changes will be monitored")
+            FileLogger.d(TAG, "addPrimaryClipChangedListener SUCCESS - clipboard changes will be monitored")
         } catch (e: Exception) {
-            Log.e(TAG, "addPrimaryClipChangedListener FAILED", e)
+            FileLogger.e(TAG, "addPrimaryClipChangedListener FAILED", e)
         }
         checkClipboard()
-        Log.d(TAG, "Clipboard monitoring STARTED")
+        FileLogger.d(TAG, "Clipboard monitoring STARTED")
     }
 
     /**
      * Stop monitoring the clipboard.
      */
     fun stop() {
-        Log.d(TAG, "stop() called, removing listener...")
+        FileLogger.d(TAG, "stop() called, removing listener...")
         try {
             clipboardManager.removePrimaryClipChangedListener(primaryClipChangedListener)
-            Log.d(TAG, "Listener removed successfully")
+            FileLogger.d(TAG, "Listener removed successfully")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to remove clipboard listener", e)
+            FileLogger.e(TAG, "Failed to remove clipboard listener", e)
         }
-        Log.d(TAG, "Clipboard monitoring stopped")
+        FileLogger.d(TAG, "Clipboard monitoring stopped")
     }
 
     /**
@@ -107,7 +106,7 @@ class ClipboardMonitor(context: Context) {
                 null
             }
         } catch (e: SecurityException) {
-            Log.e(TAG, "Cannot access clipboard", e)
+            FileLogger.e(TAG, "Cannot access clipboard", e)
             null
         }
     }
@@ -123,11 +122,11 @@ class ClipboardMonitor(context: Context) {
                 val clip = ClipData.newPlainText("ClipSync", text)
                 clipboardManager.setPrimaryClip(clip)
                 // Do not emit here: observers treat StateFlow changes as local user copies.
-                Log.d(TAG, "Set clipboard text (${text.length} chars)")
+                FileLogger.d(TAG, "Set clipboard text (${text.length} chars)")
             } catch (e: SecurityException) {
-                Log.e(TAG, "Cannot set clipboard", e)
+                FileLogger.e(TAG, "Cannot set clipboard", e)
             } catch (e: Exception) {
-                Log.e(TAG, "Unexpected error setting clipboard text", e)
+                FileLogger.e(TAG, "Unexpected error setting clipboard text", e)
             }
         }
     }
@@ -136,18 +135,18 @@ class ClipboardMonitor(context: Context) {
         try {
             val clipData = clipboardManager.primaryClip
             if (clipData == null || clipData.itemCount == 0) {
-                Log.d(TAG, "checkClipboard: primaryClip is null or empty")
+                FileLogger.d(TAG, "checkClipboard: primaryClip is null or empty")
                 return
             }
 
             val description = clipboardManager.primaryClipDescription
             if (description == null) {
-                Log.d(TAG, "checkClipboard: primaryClipDescription is null")
+                FileLogger.d(TAG, "checkClipboard: primaryClipDescription is null")
                 return
             }
 
             val mimeTypes = description.filterMimeTypes("*")?.joinToString() ?: "unknown"
-            Log.d(TAG, "checkClipboard: found content, mimeTypes=$mimeTypes")
+            FileLogger.d(TAG, "checkClipboard: found content, mimeTypes=$mimeTypes")
 
             // Check if clipboard contains image
             if (description.hasMimeType("image/*")) {
@@ -156,12 +155,12 @@ class ClipboardMonitor(context: Context) {
                        description.hasMimeType(ClipDescription.MIMETYPE_TEXT_HTML)) {
                 extractTextContent(clipData)
             } else {
-                Log.d(TAG, "checkClipboard: unsupported mime types ($mimeTypes), skipping")
+                FileLogger.d(TAG, "checkClipboard: unsupported mime types ($mimeTypes), skipping")
             }
         } catch (e: SecurityException) {
-            Log.e(TAG, "Cannot access clipboard (background restriction?): ${e.message}")
+            FileLogger.e(TAG, "Cannot access clipboard (background restriction?): ${e.message}")
         } catch (e: Exception) {
-            Log.e(TAG, "Unexpected error checking clipboard", e)
+            FileLogger.e(TAG, "Unexpected error checking clipboard", e)
         }
     }
 
@@ -170,7 +169,7 @@ class ClipboardMonitor(context: Context) {
         if (!text.isNullOrEmpty() && text != lastContent) {
             val sizeBytes = text.toByteArray(Charsets.UTF_8).size
             if (sizeBytes > maxContentSizeBytes) {
-                Log.w(TAG, "Clipboard text too large (${sizeBytes} bytes), skipping")
+                FileLogger.w(TAG, "Clipboard text too large (${sizeBytes} bytes), skipping")
                 return
             }
             lastContent = text
@@ -181,7 +180,7 @@ class ClipboardMonitor(context: Context) {
                 sizeBytes = sizeBytes,
                 checksum = EncryptionHelper.computeChecksum(text.toByteArray(Charsets.UTF_8))
             )
-            Log.d(TAG, "Clipboard text changed: ${text.take(50)}...")
+            FileLogger.d(TAG, "Clipboard text changed: ${text.take(50)}...")
         }
     }
 
@@ -202,14 +201,14 @@ class ClipboardMonitor(context: Context) {
             // Read image from URI
             val inputStream = appContext.contentResolver.openInputStream(uri)
             if (inputStream == null) {
-                Log.w(TAG, "Cannot open image stream from URI: $uri")
+                FileLogger.w(TAG, "Cannot open image stream from URI: $uri")
                 return
             }
 
             val imageBytes = inputStream.use { it.readBytes() }
 
             if (imageBytes.isEmpty() || imageBytes.size > maxContentSizeBytes) {
-                Log.w(TAG, "Image size invalid: ${imageBytes.size} bytes")
+                FileLogger.w(TAG, "Image size invalid: ${imageBytes.size} bytes")
                 return
             }
 
@@ -217,7 +216,7 @@ class ClipboardMonitor(context: Context) {
 
             // Skip if same image (deduplication)
             if (checksum == lastImageChecksum) {
-                Log.d(TAG, "Image content unchanged (checksum match)")
+                FileLogger.d(TAG, "Image content unchanged (checksum match)")
                 return
             }
 
@@ -230,9 +229,9 @@ class ClipboardMonitor(context: Context) {
                 sizeBytes = imageBytes.size,
                 checksum = checksum
             )
-            Log.d(TAG, "Clipboard image changed: ${imageBytes.size} bytes, checksum=$checksum")
+            FileLogger.d(TAG, "Clipboard image changed: ${imageBytes.size} bytes, checksum=$checksum")
         } catch (e: Exception) {
-            Log.e(TAG, "Error extracting image from clipboard", e)
+            FileLogger.e(TAG, "Error extracting image from clipboard", e)
         }
     }
 
@@ -264,7 +263,7 @@ class ClipboardMonitor(context: Context) {
                 val imageBytes = Base64.decode(base64Content, Base64.NO_WRAP)
                 val bitmap = android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
                 if (bitmap == null) {
-                    Log.e(TAG, "Failed to decode bitmap from base64")
+                    FileLogger.e(TAG, "Failed to decode bitmap from base64")
                     return@post
                 }
 
@@ -288,13 +287,13 @@ class ClipboardMonitor(context: Context) {
                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                     if (imageFile.exists()) {
                         imageFile.delete()
-                        Log.d(TAG, "Cleaned up temporary image file")
+                        FileLogger.d(TAG, "Cleaned up temporary image file")
                     }
                 }, 60000) // Delete after 1 minute
 
-                Log.d(TAG, "Set clipboard image (${imageBytes.size} bytes, ${bitmap.width}x${bitmap.height})")
+                FileLogger.d(TAG, "Set clipboard image (${imageBytes.size} bytes, ${bitmap.width}x${bitmap.height})")
             } catch (e: Exception) {
-                Log.e(TAG, "Cannot set image to clipboard", e)
+                FileLogger.e(TAG, "Cannot set image to clipboard", e)
             }
         }
     }

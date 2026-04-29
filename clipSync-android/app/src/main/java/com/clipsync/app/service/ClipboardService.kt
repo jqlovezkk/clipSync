@@ -9,7 +9,7 @@ import android.content.Intent
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
-import android.util.Log
+import com.clipsync.app.core.FileLogger
 import com.clipsync.app.core.ClipboardContentType
 import com.clipsync.app.core.ClipboardMonitor
 import com.clipsync.app.core.SettingsManager
@@ -71,7 +71,7 @@ class ClipboardService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.d(TAG, "Service created")
+        FileLogger.d(TAG, "Service created")
 
         // Initialize components
         settingsManager = SettingsManager(this)
@@ -89,7 +89,7 @@ class ClipboardService : Service() {
 
         // 启动前台服务通知，Android 14+ 需要与 Manifest 中声明的服务类型一致
         createNotificationChannel()
-        Log.d(TAG, "Starting foreground service with type=dataSync")
+        FileLogger.d(TAG, "Starting foreground service with type=dataSync")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, buildNotification(), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
@@ -119,12 +119,12 @@ class ClipboardService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "Service started")
+        FileLogger.d(TAG, "Service started")
         return START_STICKY
     }
 
     override fun onDestroy() {
-        Log.d(TAG, "Service destroyed")
+        FileLogger.d(TAG, "Service destroyed")
         isMonitoring = false
         clipboardMonitor.stop()
         heartbeatManager.destroy()
@@ -169,11 +169,11 @@ class ClipboardService : Service() {
             val token = settingsManager.getToken()
 
             if (token.isEmpty()) {
-                Log.w(TAG, "No token available, cannot connect")
+                FileLogger.w(TAG, "No token available, cannot connect")
                 return@launch
             }
 
-            Log.d(TAG, "Connecting service WebSocket to $wsUrl")
+            FileLogger.d(TAG, "Connecting service WebSocket to $wsUrl")
             webSocketClient.connect(wsUrl)
         }
     }
@@ -184,18 +184,18 @@ class ClipboardService : Service() {
                 _connectionState.value = state
                 when (state) {
                     is ConnectionState.Connected -> {
-                        Log.d(TAG, "Service WebSocket connected, sending auth")
+                        FileLogger.d(TAG, "Service WebSocket connected, sending auth")
                         sendAuth()
                     }
                     ConnectionState.Connecting -> {
-                        Log.d(TAG, "Service WebSocket connecting")
+                        FileLogger.d(TAG, "Service WebSocket connecting")
                     }
                     ConnectionState.Disconnected -> {
-                        Log.d(TAG, "Service WebSocket disconnected")
+                        FileLogger.d(TAG, "Service WebSocket disconnected")
                         _syncStatus.value = SyncStatus.Idle
                     }
                     is ConnectionState.Error -> {
-                        Log.e(TAG, "Service WebSocket error: ${state.message}")
+                        FileLogger.e(TAG, "Service WebSocket error: ${state.message}")
                     }
                 }
             }
@@ -213,7 +213,7 @@ class ClipboardService : Service() {
     private fun handleWebSocketMessage(json: String) {
         val wsMessage = WsMessage.fromJson(json)
         if (wsMessage == null) {
-            Log.w(TAG, "Failed to parse WebSocket message: ${json.take(200)}")
+            FileLogger.w(TAG, "Failed to parse WebSocket message: ${json.take(200)}")
             return
         }
 
@@ -225,7 +225,7 @@ class ClipboardService : Service() {
             MessageType.DeviceListResponse -> handleDeviceListResponse(wsMessage.payload)
             MessageType.Error -> handleError(wsMessage.payload)
             MessageType.Ping -> handlePing()
-            else -> Log.d(TAG, "Unhandled message type: ${wsMessage.type}")
+            else -> FileLogger.d(TAG, "Unhandled message type: ${wsMessage.type}")
         }
     }
 
@@ -235,7 +235,7 @@ class ClipboardService : Service() {
         val message = payload["message"]?.jsonPrimitive?.content
 
         if (success) {
-            Log.d(TAG, "Auth successful, device_id: $deviceId")
+            FileLogger.d(TAG, "Auth successful, device_id: $deviceId")
             deviceId?.let {
                 serviceScope.launch {
                     settingsManager.setDeviceId(it)
@@ -248,7 +248,7 @@ class ClipboardService : Service() {
             // Request initial history
             syncEngine.requestHistory()
         } else {
-            Log.e(TAG, "Auth failed: $message")
+            FileLogger.e(TAG, "Auth failed: $message")
         }
     }
 
@@ -258,13 +258,13 @@ class ClipboardService : Service() {
 
     private fun handleDeviceListResponse(payload: JsonObject) {
         // Device list handling can be extended here
-        Log.d(TAG, "Device list received: $payload")
+        FileLogger.d(TAG, "Device list received: $payload")
     }
 
     private fun handleError(payload: JsonObject) {
         val code = payload["code"]?.jsonPrimitive?.content
         val message = payload["message"]?.jsonPrimitive?.content
-        Log.e(TAG, "Server error: $code - $message")
+        FileLogger.e(TAG, "Server error: $code - $message")
     }
 
     private fun handlePing() {
@@ -272,13 +272,13 @@ class ClipboardService : Service() {
     }
 
     private fun setupClipboardMonitoring() {
-        Log.d(TAG, "Setting up clipboard monitoring")
+        FileLogger.d(TAG, "Setting up clipboard monitoring")
         // Monitor text changes
         serviceScope.launch {
             clipboardMonitor.currentText.collectLatest { text ->
-                Log.d(TAG, "Clipboard text flow: text=${text?.take(30)}, isMonitoring=$isMonitoring")
+                FileLogger.d(TAG, "Clipboard text flow: text=${text?.take(30)}, isMonitoring=$isMonitoring")
                 if (text != null && isMonitoring) {
-                    Log.d(TAG, "Pushing text to server: ${text.take(30)}...")
+                    FileLogger.d(TAG, "Pushing text to server: ${text.take(30)}...")
                     syncEngine.pushToServer(text)
                 }
             }
@@ -287,7 +287,7 @@ class ClipboardService : Service() {
         // Monitor image changes
         serviceScope.launch {
             clipboardMonitor.currentContent.collectLatest { content ->
-                Log.d(TAG, "Clipboard content flow: type=${content?.contentType}, isMonitoring=$isMonitoring")
+                FileLogger.d(TAG, "Clipboard content flow: type=${content?.contentType}, isMonitoring=$isMonitoring")
                 if (content != null && isMonitoring) {
                     when (content.contentType) {
                         ClipboardContentType.TEXT -> {
@@ -295,7 +295,7 @@ class ClipboardService : Service() {
                         }
                         ClipboardContentType.IMAGE -> {
                             content.imageBase64?.let { base64 ->
-                                Log.d(TAG, "Pushing image to server: ${content.sizeBytes} bytes")
+                                FileLogger.d(TAG, "Pushing image to server: ${content.sizeBytes} bytes")
                                 syncEngine.pushImageToServer(
                                     imageBase64 = base64,
                                     format = content.imageFormat,
@@ -312,13 +312,13 @@ class ClipboardService : Service() {
     }
 
     private fun startClipboardMonitoring() {
-        Log.d(TAG, "startClipboardMonitoring() called, current isMonitoring=$isMonitoring")
+        FileLogger.d(TAG, "startClipboardMonitoring() called, current isMonitoring=$isMonitoring")
         if (!isMonitoring) {
             clipboardMonitor.start()
             isMonitoring = true
-            Log.d(TAG, "Clipboard monitoring STARTED in service, isMonitoring=$isMonitoring")
+            FileLogger.d(TAG, "Clipboard monitoring STARTED in service, isMonitoring=$isMonitoring")
         } else {
-            Log.d(TAG, "Clipboard monitoring already active, skipping")
+            FileLogger.d(TAG, "Clipboard monitoring already active, skipping")
         }
     }
 
@@ -330,13 +330,13 @@ class ClipboardService : Service() {
             val token = settingsManager.getToken()
             val deviceName = settingsManager.getDeviceName()
             if (token.isNotEmpty()) {
-                Log.d(TAG, "Sending auth for device=$deviceName")
+                FileLogger.d(TAG, "Sending auth for device=$deviceName")
                 val message = WsMessageBuilder.auth(token, deviceName)
                 if (!webSocketClient.send(message)) {
-                    Log.w(TAG, "Failed to send auth message")
+                    FileLogger.w(TAG, "Failed to send auth message")
                 }
             } else {
-                Log.w(TAG, "Skipping auth send because token is empty")
+                FileLogger.w(TAG, "Skipping auth send because token is empty")
             }
         }
     }
@@ -348,7 +348,7 @@ class ClipboardService : Service() {
         if (webSocketClient.isConnected()) {
             webSocketClient.send(WsMessageBuilder.deviceList())
         } else {
-            Log.w(TAG, "Cannot request device list: WebSocket not connected")
+            FileLogger.w(TAG, "Cannot request device list: WebSocket not connected")
         }
     }
 

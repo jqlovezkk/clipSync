@@ -1,7 +1,6 @@
-package com.clipsync.app.core
+﻿package com.clipsync.app.core
 
 import android.util.Base64
-import android.util.Log
 import java.security.MessageDigest
 import java.security.SecureRandom
 import javax.crypto.Cipher
@@ -73,7 +72,7 @@ object EncryptionHelper {
         return try {
             val parts = encryptedData.split(":")
             if (parts.size != 2) {
-                Log.e(TAG, "Invalid encrypted data format: expected 'salt:content'")
+                FileLogger.e(TAG, "Invalid encrypted data format: expected 'salt:content'")
                 return null
             }
 
@@ -81,7 +80,7 @@ object EncryptionHelper {
             val ivAndCiphertext = Base64.decode(parts[1], Base64.NO_WRAP)
 
             if (ivAndCiphertext.size < IV_LENGTH) {
-                Log.e(TAG, "Ciphertext too short")
+                FileLogger.e(TAG, "Ciphertext too short")
                 return null
             }
 
@@ -96,7 +95,7 @@ object EncryptionHelper {
             val decryptedBytes = cipher.doFinal(ciphertext)
             String(decryptedBytes, Charsets.UTF_8)
         } catch (e: Exception) {
-            Log.e(TAG, "Decryption failed", e)
+            FileLogger.e(TAG, "Decryption failed", e)
             null
         }
     }

@@ -1,6 +1,6 @@
 package com.clipsync.app.network
 
-import android.util.Log
+import com.clipsync.app.core.FileLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -26,7 +26,7 @@ class HeartbeatManager(
      */
     fun start() {
         stop()
-        Log.d(TAG, "Starting heartbeat (interval: ${intervalMs}ms)")
+        FileLogger.d(TAG, "Starting heartbeat (interval: ${intervalMs}ms)")
         heartbeatJob = scope.launch {
             while (isActive) {
                 delay(intervalMs)
@@ -35,9 +35,9 @@ class HeartbeatManager(
                     val message = WsMessageBuilder.heartbeat(sequenceNumber)
                     val sent = webSocketClient.send(message)
                     if (!sent) {
-                        Log.w(TAG, "Failed to send heartbeat #$sequenceNumber")
+                        FileLogger.w(TAG, "Failed to send heartbeat #$sequenceNumber")
                     } else {
-                        Log.d(TAG, "Heartbeat #$sequenceNumber sent")
+                        FileLogger.d(TAG, "Heartbeat #$sequenceNumber sent")
                     }
                 }
             }
@@ -50,7 +50,7 @@ class HeartbeatManager(
     fun stop() {
         heartbeatJob?.cancel()
         heartbeatJob = null
-        Log.d(TAG, "Heartbeat stopped")
+        FileLogger.d(TAG, "Heartbeat stopped")
     }
 
     /**

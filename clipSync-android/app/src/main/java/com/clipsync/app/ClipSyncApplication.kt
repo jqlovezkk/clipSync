@@ -1,6 +1,7 @@
 package com.clipsync.app
 
 import android.app.Application
+import com.clipsync.app.core.FileLogger
 import com.clipsync.app.data.AppDatabase
 
 /**
@@ -16,6 +17,9 @@ class ClipSyncApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        
+        // 初始化文件日志器
+        FileLogger.init(this)
     }
 
     companion object {

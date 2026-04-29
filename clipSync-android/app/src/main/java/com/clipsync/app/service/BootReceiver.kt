@@ -4,7 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import android.util.Log
+import com.clipsync.app.core.FileLogger
 
 /**
  * BroadcastReceiver that starts the ClipboardService on device boot.
@@ -16,7 +16,7 @@ class BootReceiver : BroadcastReceiver() {
         when (intent.action) {
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED -> {
-                Log.d(TAG, "Boot/Package replacement received, starting service")
+                FileLogger.d(TAG, "Boot/Package replacement received, starting service")
                 startClipboardService(context)
             }
         }

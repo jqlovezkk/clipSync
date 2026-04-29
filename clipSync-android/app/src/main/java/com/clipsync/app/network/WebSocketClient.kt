@@ -1,6 +1,6 @@
 package com.clipsync.app.network
 
-import android.util.Log
+import com.clipsync.app.core.FileLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -46,7 +46,7 @@ class WebSocketClient {
 
     private val listener = object : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
-            Log.d(TAG, "WebSocket connected")
+            FileLogger.d(TAG, "WebSocket connected")
             _connectionState.value = ConnectionState.Connected
             reconnectHandler.onConnected()
         }
@@ -54,10 +54,10 @@ class WebSocketClient {
         override fun onMessage(webSocket: WebSocket, text: String) {
             // Drop messages that are too large to prevent OOM
             if (text.length > MAX_MESSAGE_CHARS) {
-                Log.w(TAG, "Dropping oversized message: ${text.length} chars")
+                FileLogger.w(TAG, "Dropping oversized message: ${text.length} chars")
                 return
             }
-            Log.d(TAG, "WebSocket message received: ${text.take(100)}")
+            FileLogger.d(TAG, "WebSocket message received: ${text.take(100)}")
             scope.launch {
                 _messages.emit(text)
             }
@@ -65,23 +65,23 @@ class WebSocketClient {
 
         override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
             if (bytes.size > MAX_MESSAGE_BYTES) {
-                Log.w(TAG, "Dropping oversized binary message: ${bytes.size} bytes")
+                FileLogger.w(TAG, "Dropping oversized binary message: ${bytes.size} bytes")
                 return
             }
-            Log.d(TAG, "WebSocket binary message received")
+            FileLogger.d(TAG, "WebSocket binary message received")
             scope.launch {
                 _messages.emit(bytes.utf8())
             }
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            Log.d(TAG, "WebSocket closed: $code - $reason")
+            FileLogger.d(TAG, "WebSocket closed: $code - $reason")
             _connectionState.value = ConnectionState.Disconnected
             reconnectHandler.onDisconnected()
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            Log.e(TAG, "WebSocket failure", t)
+            FileLogger.e(TAG, "WebSocket failure", t)
             _connectionState.value = ConnectionState.Disconnected
             reconnectHandler.onDisconnected()
         }
@@ -92,13 +92,13 @@ class WebSocketClient {
      */
     fun connect(url: String) {
         if (_connectionState.value == ConnectionState.Connected) {
-            Log.w(TAG, "Already connected, ignoring connect call")
+            FileLogger.w(TAG, "Already connected, ignoring connect call")
             return
         }
 
         reconnectHandler.trackConnection(url)
         _connectionState.value = ConnectionState.Connecting
-        Log.d(TAG, "Connecting to $url")
+        FileLogger.d(TAG, "Connecting to $url")
 
         client = OkHttpClient.Builder()
             .pingInterval(30, TimeUnit.SECONDS)
@@ -120,7 +120,7 @@ class WebSocketClient {
     fun send(message: String): Boolean {
         val ws = webSocket
         if (ws == null || _connectionState.value != ConnectionState.Connected) {
-            Log.w(TAG, "Cannot send: not connected")
+            FileLogger.w(TAG, "Cannot send: not connected")
             return false
         }
         return ws.send(message)
@@ -137,7 +137,7 @@ class WebSocketClient {
      * Disconnect from the WebSocket server.
      */
     fun disconnect() {
-        Log.d(TAG, "Disconnecting")
+        FileLogger.d(TAG, "Disconnecting")
         reconnectHandler.cancel()
         webSocket?.close(NORMAL_CLOSE_CODE, "Client disconnect")
         webSocket = null
@@ -151,7 +151,7 @@ class WebSocketClient {
     fun destroy() {
         disconnect()
         scope.cancel()
-        Log.d(TAG, "WebSocketClient destroyed")
+        FileLogger.d(TAG, "WebSocketClient destroyed")
     }
 
     /**

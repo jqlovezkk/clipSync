@@ -7,7 +7,7 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.Build
 import android.os.IBinder
-import android.util.Log
+import com.clipsync.app.core.FileLogger
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.clipsync.app.core.ClipboardMonitor
@@ -52,7 +52,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val binder = service as ClipboardService.LocalBinder
             clipboardService = binder.getService()
             isBound = true
-            Log.d(TAG, "ClipboardService bound successfully")
+            FileLogger.d(TAG, "ClipboardService bound successfully")
 
             // Read current state from service
             updateConnectionStateFromService()
@@ -61,7 +61,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         override fun onServiceDisconnected(name: ComponentName?) {
             clipboardService = null
             isBound = false
-            Log.d(TAG, "ClipboardService disconnected")
+            FileLogger.d(TAG, "ClipboardService disconnected")
         }
     }
 
@@ -111,9 +111,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val intent = Intent(getApplication(), ClipboardService::class.java)
         val bound = getApplication<Application>().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
         if (bound) {
-            Log.d(TAG, "Binding to ClipboardService requested")
+            FileLogger.d(TAG, "Binding to ClipboardService requested")
         } else {
-            Log.w(TAG, "Failed to bind to ClipboardService")
+            FileLogger.w(TAG, "Failed to bind to ClipboardService")
         }
     }
 
@@ -134,7 +134,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun observeHistory() {
         viewModelScope.launch {
             database.clipboardDao().getHistorySummaries().collectLatest { items ->
-                Log.d(TAG, "历史摘要已刷新: count=${items.size}")
+                FileLogger.d(TAG, "历史摘要已刷新: count=${items.size}")
                 _history.value = items
             }
         }
@@ -168,7 +168,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun handleError(payload: JsonObject) {
         val code = payload["code"]?.jsonPrimitive?.content
         val message = payload["message"]?.jsonPrimitive?.content
-        Log.e(TAG, "Server error: $code - $message")
+        FileLogger.e(TAG, "Server error: $code - $message")
         _errorMessage.value = message ?: "Server error"
     }
 
@@ -201,7 +201,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 },
                 onFailure = { error ->
-                    Log.e("MainViewModel", "Login failed", error)
+                    FileLogger.e("MainViewModel", "Login failed", error)
                     _uiState.value = MainUiState.Unauthenticated
                     _errorMessage.value = error.message ?: "Network error"
                 }
@@ -236,7 +236,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 },
                 onFailure = { error ->
-                    Log.e("MainViewModel", "Register failed", error)
+                    FileLogger.e("MainViewModel", "Register failed", error)
                     _uiState.value = MainUiState.Unauthenticated
                     _errorMessage.value = error.message ?: "Network error"
                 }
@@ -264,18 +264,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val entity = database.clipboardDao().getById(historyId)
             if (entity == null) {
-                Log.w(TAG, "复制历史项失败，未找到记录: id=$historyId")
+                FileLogger.w(TAG, "复制历史项失败，未找到记录: id=$historyId")
                 _errorMessage.value = "未找到要复制的历史记录"
                 return@launch
             }
 
             when (entity.contentType) {
                 "image" -> {
-                    Log.d(TAG, "复制历史图片到剪贴板: id=$historyId, size=${entity.content.length}")
+                    FileLogger.d(TAG, "复制历史图片到剪贴板: id=$historyId, size=${entity.content.length}")
                     clipboardMonitor.setImageToClipboard(entity.content)
                 }
                 else -> {
-                    Log.d(TAG, "复制历史文本到剪贴板: id=$historyId, length=${entity.content.length}")
+                    FileLogger.d(TAG, "复制历史文本到剪贴板: id=$historyId, length=${entity.content.length}")
                     clipboardMonitor.setTextToClipboard(entity.content)
                 }
             }

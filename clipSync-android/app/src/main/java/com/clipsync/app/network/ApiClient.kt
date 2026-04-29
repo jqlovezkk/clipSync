@@ -1,6 +1,6 @@
 package com.clipsync.app.network
 
-import android.util.Log
+import com.clipsync.app.core.FileLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -97,8 +97,8 @@ class ApiClient {
 
     private fun post(path: String, body: String): String {
         val urlString = "$baseUrl$path"
-        Log.d(TAG, "POST $urlString")
-        Log.d(TAG, "Body: $body")
+        FileLogger.d(TAG, "POST $urlString")
+        FileLogger.d(TAG, "Body: $body")
         try {
             val url = URL(urlString)
             val connection = url.openConnection() as HttpURLConnection
@@ -109,17 +109,17 @@ class ApiClient {
             connection.setRequestProperty("Content-Type", "application/json")
             connection.outputStream.use { it.write(body.toByteArray()) }
             val response = readResponse(connection)
-            Log.d(TAG, "POST $urlString Response: $response")
+            FileLogger.d(TAG, "POST $urlString Response: $response")
             return response
         } catch (e: Exception) {
-            Log.e(TAG, "POST $urlString failed", e)
+            FileLogger.e(TAG, "POST $urlString failed", e)
             throw e
         }
     }
 
     private fun postWithAuth(path: String, body: String, token: String): String {
         val urlString = "$baseUrl$path"
-        Log.d(TAG, "POST (Auth) $urlString")
+        FileLogger.d(TAG, "POST (Auth) $urlString")
         try {
             val url = URL(urlString)
             val connection = url.openConnection() as HttpURLConnection
@@ -131,17 +131,17 @@ class ApiClient {
             connection.setRequestProperty("Authorization", "Bearer $token")
             connection.outputStream.use { it.write(body.toByteArray()) }
             val response = readResponse(connection)
-            Log.d(TAG, "POST (Auth) $urlString Response: $response")
+            FileLogger.d(TAG, "POST (Auth) $urlString Response: $response")
             return response
         } catch (e: Exception) {
-            Log.e(TAG, "POST (Auth) $urlString failed", e)
+            FileLogger.e(TAG, "POST (Auth) $urlString failed", e)
             throw e
         }
     }
 
     private fun getWithAuth(path: String, token: String): String {
         val urlString = "$baseUrl$path"
-        Log.d(TAG, "GET (Auth) $urlString")
+        FileLogger.d(TAG, "GET (Auth) $urlString")
         try {
             val url = URL(urlString)
             val connection = url.openConnection() as HttpURLConnection
@@ -150,17 +150,17 @@ class ApiClient {
             connection.requestMethod = "GET"
             connection.setRequestProperty("Authorization", "Bearer $token")
             val response = readResponse(connection)
-            Log.d(TAG, "GET (Auth) $urlString Response: $response")
+            FileLogger.d(TAG, "GET (Auth) $urlString Response: $response")
             return response
         } catch (e: Exception) {
-            Log.e(TAG, "GET (Auth) $urlString failed", e)
+            FileLogger.e(TAG, "GET (Auth) $urlString failed", e)
             throw e
         }
     }
 
     private fun deleteWithAuth(path: String, token: String): String {
         val urlString = "$baseUrl$path"
-        Log.d(TAG, "DELETE (Auth) $urlString")
+        FileLogger.d(TAG, "DELETE (Auth) $urlString")
         try {
             val url = URL(urlString)
             val connection = url.openConnection() as HttpURLConnection
@@ -169,17 +169,17 @@ class ApiClient {
             connection.requestMethod = "DELETE"
             connection.setRequestProperty("Authorization", "Bearer $token")
             val response = readResponse(connection)
-            Log.d(TAG, "DELETE (Auth) $urlString Response: $response")
+            FileLogger.d(TAG, "DELETE (Auth) $urlString Response: $response")
             return response
         } catch (e: Exception) {
-            Log.e(TAG, "DELETE (Auth) $urlString failed", e)
+            FileLogger.e(TAG, "DELETE (Auth) $urlString failed", e)
             throw e
         }
     }
 
     private fun get(path: String): String {
         val urlString = "$baseUrl$path"
-        Log.d(TAG, "GET $urlString")
+        FileLogger.d(TAG, "GET $urlString")
         try {
             val url = URL(urlString)
             val connection = url.openConnection() as HttpURLConnection
@@ -187,17 +187,17 @@ class ApiClient {
             connection.readTimeout = 10000
             connection.requestMethod = "GET"
             val response = readResponse(connection)
-            Log.d(TAG, "GET $urlString Response: $response")
+            FileLogger.d(TAG, "GET $urlString Response: $response")
             return response
         } catch (e: Exception) {
-            Log.e(TAG, "GET $urlString failed", e)
+            FileLogger.e(TAG, "GET $urlString failed", e)
             throw e
         }
     }
 
     private fun readResponse(connection: HttpURLConnection): String {
         val responseCode = connection.responseCode
-        Log.d(TAG, "HTTP Response Code: $responseCode")
+        FileLogger.d(TAG, "HTTP Response Code: $responseCode")
         val inputStream = if (responseCode in 200..299) {
             connection.inputStream
         } else {
@@ -207,7 +207,7 @@ class ApiClient {
         connection.disconnect()
         
         if (responseCode !in 200..299) {
-            Log.e(TAG, "HTTP Error $responseCode: $body")
+            FileLogger.e(TAG, "HTTP Error $responseCode: $body")
             // If it looks like JSON, return it so the caller can parse the structured error.
             if (!body.trimStart().startsWith("{")) {
                 throw IOException("HTTP $responseCode: $body")

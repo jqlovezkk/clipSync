@@ -144,10 +144,14 @@ namespace ClipSync.WPF.Network
             {
                 // Expected on disconnect
             }
+            catch (System.Net.WebSockets.WebSocketException ex) when (
+                ex.Message.Contains("closed") || ex.Message.Contains("handshake"))
+            {
+                AppLogger.Warn("WebSocketClient", "WebSocket 连接被远端关闭（未完成握手）");
+            }
             catch (Exception ex)
             {
-                // Connection error
-                AppLogger.Error("WebSocketClient", "接收 WebSocket 消息失败", ex);
+                AppLogger.Warn("WebSocketClient", $"WebSocket 接收消息异常: {ex.GetType().Name}: {ex.Message}");
             }
             finally
             {

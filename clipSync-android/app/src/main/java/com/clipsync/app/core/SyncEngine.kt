@@ -1,6 +1,5 @@
-package com.clipsync.app.core
+﻿package com.clipsync.app.core
 
-import android.util.Log
 import com.clipsync.app.data.AppDatabase
 import com.clipsync.app.data.entities.ClipboardEntity
 import com.clipsync.app.network.WsMessage
@@ -62,10 +61,10 @@ class SyncEngine(
             settingsManager.syncEnabledFlow.collect { enabled ->
                 if (enabled) {
                     _syncStatus.value = SyncStatus.Active
-                    Log.d(TAG, "Sync monitoring enabled")
+                    FileLogger.d(TAG, "Sync monitoring enabled")
                 } else {
                     _syncStatus.value = SyncStatus.Paused
-                    Log.d(TAG, "Sync monitoring paused")
+                    FileLogger.d(TAG, "Sync monitoring paused")
                 }
             }
         }
@@ -79,26 +78,26 @@ class SyncEngine(
             if (isDestroyed) return@launch
             val syncEnabled = settingsManager.isSyncEnabled()
             if (!syncEnabled) {
-                Log.d(TAG, "Sync disabled, skipping push")
+                FileLogger.d(TAG, "Sync disabled, skipping push")
                 return@launch
             }
 
             if (!webSocketClient.isConnected()) {
-                Log.w(TAG, "Not connected, cannot push")
+                FileLogger.w(TAG, "Not connected, cannot push")
                 return@launch
             }
 
             // Check content size to prevent OOM
             val contentSizeBytes = content.toByteArray(Charsets.UTF_8).size
             if (contentSizeBytes > maxContentSizeBytes) {
-                Log.w(TAG, "Content too large (${contentSizeBytes} bytes), skipping push")
+                FileLogger.w(TAG, "Content too large (${contentSizeBytes} bytes), skipping push")
                 return@launch
             }
 
             // Deduplication: skip if same content was just sent
             val checksum = EncryptionHelper.calculateChecksum(content)
             if (checksum == lastSentChecksum) {
-                Log.d(TAG, "Duplicate content, skipping push")
+                FileLogger.d(TAG, "Duplicate content, skipping push")
                 return@launch
             }
             lastSentChecksum = checksum
@@ -108,7 +107,7 @@ class SyncEngine(
                 try {
                     EncryptionHelper.encryptWithSalt(content)
                 } catch (e: Exception) {
-                    Log.e(TAG, "Encryption failed, skipping push", e)
+                    FileLogger.e(TAG, "Encryption failed, skipping push", e)
                     return@launch
                 }
             } else {
@@ -130,11 +129,11 @@ class SyncEngine(
 
             val sent = webSocketClient.send(messageWithDevice)
             if (sent) {
-                Log.d(TAG, "Pushed text to server (${content.length} chars)")
+                FileLogger.d(TAG, "Pushed text to server (${content.length} chars)")
                 // Save to local history
                 saveToHistory(content, "text", checksum, deviceId)
             } else {
-                Log.w(TAG, "Failed to push to server")
+                FileLogger.w(TAG, "Failed to push to server")
             }
         }
     }
@@ -147,24 +146,24 @@ class SyncEngine(
             if (isDestroyed) return@launch
             val syncEnabled = settingsManager.isSyncEnabled()
             if (!syncEnabled) {
-                Log.d(TAG, "Sync disabled, skipping image push")
+                FileLogger.d(TAG, "Sync disabled, skipping image push")
                 return@launch
             }
 
             if (!webSocketClient.isConnected()) {
-                Log.w(TAG, "Not connected, cannot push image")
+                FileLogger.w(TAG, "Not connected, cannot push image")
                 return@launch
             }
 
             // Check content size
             if (size > maxContentSizeBytes) {
-                Log.w(TAG, "Image too large (${size} bytes), skipping push")
+                FileLogger.w(TAG, "Image too large (${size} bytes), skipping push")
                 return@launch
             }
 
             // Deduplication
             if (checksum == lastSentChecksum) {
-                Log.d(TAG, "Duplicate image, skipping push")
+                FileLogger.d(TAG, "Duplicate image, skipping push")
                 return@launch
             }
             lastSentChecksum = checksum
@@ -174,7 +173,7 @@ class SyncEngine(
                 try {
                     EncryptionHelper.encryptWithSalt(imageBase64)
                 } catch (e: Exception) {
-                    Log.e(TAG, "Image encryption failed, skipping push", e)
+                    FileLogger.e(TAG, "Image encryption failed, skipping push", e)
                     return@launch
                 }
             } else {
@@ -194,10 +193,10 @@ class SyncEngine(
 
             val sent = webSocketClient.send(messageWithDevice)
             if (sent) {
-                Log.d(TAG, "Pushed image to server ($size bytes, format=$format)")
+                FileLogger.d(TAG, "Pushed image to server ($size bytes, format=$format)")
                 saveToHistory(imageBase64, "image", checksum, deviceId)
             } else {
-                Log.w(TAG, "Failed to push image to server")
+                FileLogger.w(TAG, "Failed to push image to server")
             }
         }
     }
@@ -212,7 +211,7 @@ class SyncEngine(
 
                 val content = payload.safeString("content")
                 if (content.isNullOrEmpty()) {
-                    Log.w(TAG, "Ignoring clipboard sync with empty content: $payload")
+                    FileLogger.w(TAG, "Ignoring clipboard sync with empty content: $payload")
                     return@launch
                 }
 
@@ -226,13 +225,13 @@ class SyncEngine(
                 // Skip if this content originated from this device (avoid echo loop)
                 val myDeviceId = settingsManager.getDeviceId()
                 if (sourceDeviceId.isNotEmpty() && sourceDeviceId == myDeviceId) {
-                    Log.d(TAG, "Skipping own content (echo prevention)")
+                    FileLogger.d(TAG, "Skipping own content (echo prevention)")
                     return@launch
                 }
 
                 val encryptionEnabled = settingsManager.isEncryptionEnabled()
                 if (encrypted && !encryptionEnabled) {
-                    Log.w(TAG, "Encrypted clipboard sync received but encryption is disabled locally")
+                    FileLogger.w(TAG, "Encrypted clipboard sync received but encryption is disabled locally")
                     _syncStatus.value = SyncStatus.Error("无法解密远端剪贴板内容")
                     return@launch
                 }
@@ -240,12 +239,12 @@ class SyncEngine(
                 val decryptedContent = if (encrypted) {
                     try {
                         EncryptionHelper.decryptWithSalt(content) ?: run {
-                            Log.e(TAG, "Failed to decrypt content")
+                            FileLogger.e(TAG, "Failed to decrypt content")
                             _syncStatus.value = SyncStatus.Error("解密远端剪贴板内容失败")
                             return@launch
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Unexpected decryption error", e)
+                        FileLogger.e(TAG, "Unexpected decryption error", e)
                         _syncStatus.value = SyncStatus.Error("解密远端剪贴板内容失败")
                         return@launch
                     }
@@ -260,21 +259,21 @@ class SyncEngine(
                 when (contentType) {
                     "text" -> {
                         clipboardMonitor.setTextToClipboard(decryptedContent)
-                        Log.d(TAG, "Synced text from $sourceDeviceName: ${decryptedContent.take(50)}...")
+                        FileLogger.d(TAG, "Synced text from $sourceDeviceName: ${decryptedContent.take(50)}...")
                     }
                     "image" -> {
                         clipboardMonitor.setImageToClipboard(decryptedContent)
-                        Log.d(TAG, "Synced image from $sourceDeviceName (${decryptedContent.length} chars base64)")
+                        FileLogger.d(TAG, "Synced image from $sourceDeviceName (${decryptedContent.length} chars base64)")
                     }
                     else -> {
-                        Log.w(TAG, "Unknown content type in clipboard sync: $contentType, payload=$payload")
+                        FileLogger.w(TAG, "Unknown content type in clipboard sync: $contentType, payload=$payload")
                         return@launch
                     }
                 }
 
                 saveToHistory(decryptedContent, contentType, checksum, sourceDeviceId, sourceDeviceName)
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to handle incoming clipboard sync: $payload", e)
+                FileLogger.e(TAG, "Failed to handle incoming clipboard sync: $payload", e)
                 _syncStatus.value = SyncStatus.Error("处理远端剪贴板同步失败")
             }
         }
@@ -312,7 +311,7 @@ class SyncEngine(
 
             // Insert into local database
             database.clipboardDao().insertAll(items)
-            Log.d(TAG, "Saved ${items.size} history items")
+            FileLogger.d(TAG, "Saved ${items.size} history items")
         }
     }
 
@@ -338,7 +337,7 @@ class SyncEngine(
         scope.launch {
             // Skip saving if content is too large
             if (content.toByteArray(Charsets.UTF_8).size > maxContentSizeBytes) {
-                Log.w(TAG, "Content too large for history, skipping save")
+                FileLogger.w(TAG, "Content too large for history, skipping save")
                 return@launch
             }
             val entity = ClipboardEntity(
@@ -368,7 +367,7 @@ class SyncEngine(
     fun destroy() {
         isDestroyed = true
         scope.cancel()
-        Log.d(TAG, "SyncEngine destroyed")
+        FileLogger.d(TAG, "SyncEngine destroyed")
     }
 
     companion object {
