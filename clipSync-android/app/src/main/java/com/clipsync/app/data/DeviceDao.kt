@@ -23,6 +23,9 @@ interface DeviceDao {
     @Query("SELECT * FROM devices WHERE isOnline = 1")
     suspend fun getOnlineDevices(): List<DeviceEntity>
 
+    @Query("SELECT * FROM devices WHERE isOnline = 1 ORDER BY deviceName ASC")
+    fun getOnlineDevicesFlow(): Flow<List<DeviceEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: DeviceEntity)
 

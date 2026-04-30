@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -261,8 +262,20 @@ class ClipboardService : Service() {
     }
 
     private fun handleDeviceListResponse(payload: JsonObject) {
-        // Device list handling can be extended here
-        FileLogger.d(TAG, "Device list received: $payload")
+        serviceScope.launch {
+            val devices = payload["devices"]?.jsonArray?.mapNotNull { item ->
+                val obj = item as? JsonObject ?: return@mapNotNull null
+                com.clipsync.app.data.entities.DeviceEntity(
+                    deviceId = obj["device_id"]?.jsonPrimitive?.content ?: return@mapNotNull null,
+                    deviceName = obj["device_name"]?.jsonPrimitive?.content ?: "Unknown",
+                    platform = obj["platform"]?.jsonPrimitive?.content ?: "unknown",
+                    lastSeen = obj["last_seen"]?.jsonPrimitive?.content?.toLongOrNull() ?: System.currentTimeMillis(),
+                    isOnline = obj["is_online"]?.jsonPrimitive?.booleanOrNull ?: false
+                )
+            }.orEmpty()
+            database.deviceDao().insertAll(devices)
+            FileLogger.d(TAG, "Device list saved: count=${devices.size}")
+        }
     }
 
     private fun handleError(payload: JsonObject) {

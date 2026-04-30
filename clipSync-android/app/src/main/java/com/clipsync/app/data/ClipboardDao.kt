@@ -38,6 +38,9 @@ interface ClipboardDao {
     @Query("SELECT * FROM clipboard_history ORDER BY createdAt DESC LIMIT :limit")
     suspend fun getRecent(limit: Int = 50): List<ClipboardEntity>
 
+    @Query("SELECT * FROM clipboard_history ORDER BY createdAt DESC LIMIT :limit")
+    fun getRecentFlow(limit: Int = 50): Flow<List<ClipboardEntity>>
+
     @Query("SELECT * FROM clipboard_history WHERE id = :id LIMIT 1")
     suspend fun getById(id: Int): ClipboardEntity?
 

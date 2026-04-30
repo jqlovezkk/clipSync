@@ -1,10 +1,17 @@
 package com.clipsync.app.ime
 
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.inputmethodservice.InputMethodService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
@@ -14,7 +21,7 @@ import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import com.clipsync.app.core.ClipboardContentType
+import com.clipsync.app.R
 import com.clipsync.app.core.ClipboardMonitor
 import com.clipsync.app.core.EncryptionHelper
 import com.clipsync.app.core.FileLogger
@@ -32,7 +39,6 @@ import com.clipsync.app.network.WsMessageBuilder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -54,22 +60,38 @@ class ClipSyncInputMethodService : InputMethodService() {
 
     private var keyboardMode = KeyboardMode.Letters
     private var isUppercase = false
-    private var isClipboardMonitoring = false
+    private var isChineseMode = false
     private var currentConnectionState: ConnectionState = ConnectionState.Disconnected
     private var activePanel = ImePanel.Clipboard
     private var isPanelVisible = false
+    private var currentEditorInfo: EditorInfo? = null
+
+    private var recentHistory: List<ClipboardEntity> = emptyList()
+    private var onlineDevices: List<DeviceEntity> = emptyList()
+    private var composingPinyin = ""
+    private var composingCandidates: List<String> = emptyList()
+
+    private val deleteRepeatHandler = Handler(Looper.getMainLooper())
+    private val deleteRepeatRunnable = object : Runnable {
+        override fun run() {
+            deleteSelectedOrPreviousText()
+            deleteRepeatHandler.postDelayed(this, DELETE_REPEAT_INTERVAL_MS)
+        }
+    }
 
     private var rootView: LinearLayout? = null
-    private var statusTextView: TextView? = null
-    private var historyRow: LinearLayout? = null
+    private var statusBadgeView: TextView? = null
+    private var composingBar: LinearLayout? = null
+    private var composingTextView: TextView? = null
+    private var candidateRow: LinearLayout? = null
+    private var candidateScrollView: HorizontalScrollView? = null
+    private var panelToggleRow: LinearLayout? = null
+    private var clipboardTabButton: Button? = null
+    private var devicesTabButton: Button? = null
     private var panelSection: LinearLayout? = null
     private var panelHost: LinearLayout? = null
     private var keyboardSection: LinearLayout? = null
     private var keyboardRowsContainer: LinearLayout? = null
-    private var openPanelButton: Button? = null
-    private var keyboardTabButton: Button? = null
-    private var clipboardTabButton: Button? = null
-    private var devicesTabButton: Button? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -85,7 +107,7 @@ class ClipSyncInputMethodService : InputMethodService() {
             database = database
         )
 
-        observeClipboardFlows()
+        observeLocalData()
         observeConnectionState()
         observeMessages()
     }
@@ -94,31 +116,82 @@ class ClipSyncInputMethodService : InputMethodService() {
         if (rootView == null) {
             rootView = buildInputView()
         }
-        updateStatus()
-        refreshHistoryStrip()
-        refreshPanels()
+        updateStatusBadge()
+        refreshUiFromCache()
         renderKeyboard()
         updateModeVisibility()
         return rootView!!
     }
 
+    override fun onEvaluateFullscreenMode(): Boolean = false
+
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         FileLogger.d(TAG, "IME input view started, restarting=$restarting")
+        currentEditorInfo = info
+        syncKeyboardStateForEditor(info)
         ensureConnected()
-        startClipboardMonitoring()
-        refreshHistoryStrip()
-        refreshPanels()
+        refreshUiFromCache()
+        updateStatusBadge()
+        renderKeyboard()
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
         FileLogger.d(TAG, "IME input view finished, finishingInput=$finishingInput")
-        stopClipboardMonitoring()
+        stopDeleteRepeat()
+    }
+
+    override fun onUpdateSelection(
+        oldSelStart: Int,
+        oldSelEnd: Int,
+        newSelStart: Int,
+        newSelEnd: Int,
+        candidatesStart: Int,
+        candidatesEnd: Int
+    ) {
+        super.onUpdateSelection(
+            oldSelStart,
+            oldSelEnd,
+            newSelStart,
+            newSelEnd,
+            candidatesStart,
+            candidatesEnd
+        )
+        if (keyboardMode == KeyboardMode.Letters) {
+            syncShiftStateForCursor()
+        }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (isChineseMode && keyboardMode == KeyboardMode.Letters && composingPinyin.isNotEmpty()) {
+            val index = when (keyCode) {
+                KeyEvent.KEYCODE_1 -> 0
+                KeyEvent.KEYCODE_2 -> 1
+                KeyEvent.KEYCODE_3 -> 2
+                KeyEvent.KEYCODE_4 -> 3
+                KeyEvent.KEYCODE_5 -> 4
+                KeyEvent.KEYCODE_6 -> 5
+                KeyEvent.KEYCODE_7 -> 6
+                KeyEvent.KEYCODE_8 -> 7
+                KeyEvent.KEYCODE_9 -> 8
+                else -> -1
+            }
+            if (index >= 0) {
+                val candidate = composingCandidates.getOrNull(index)
+                if (candidate != null) {
+                    commitComposingText(selected = candidate)
+                } else if (index == composingCandidates.size) {
+                    commitComposingText(selected = composingPinyin)
+                }
+                return true
+            }
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     override fun onDestroy() {
-        stopClipboardMonitoring()
+        stopDeleteRepeat()
         heartbeatManager.destroy()
         syncEngine.destroy()
         webSocketClient.destroy()
@@ -129,121 +202,27 @@ class ClipSyncInputMethodService : InputMethodService() {
     private fun buildInputView(): LinearLayout {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#F2F4F8"))
+            setBackgroundColor(Color.parseColor("#EAF0F7"))
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
-            setPadding(dp(8), dp(8), dp(8), dp(10))
+            setPadding(dp(8), dp(6), dp(8), dp(8))
         }
 
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4), dp(2), dp(4), dp(6))
-        }
-
-        val titleView = TextView(this).apply {
-            text = getString(com.clipsync.app.R.string.ime_service_name)
-            setTextColor(Color.parseColor("#111827"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        header.addView(titleView)
-
-        statusTextView = TextView(this).apply {
-            setTextColor(Color.parseColor("#2563EB"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        }
-        header.addView(statusTextView)
-        root.addView(header)
-
-        val historyScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            setPadding(0, 0, 0, dp(8))
-        }
-        historyRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-        historyScroll.addView(historyRow)
-        root.addView(historyScroll)
-
-        val quickActions = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 0, 0, dp(8))
-        }
-        openPanelButton = Button(this).apply {
-            text = getString(com.clipsync.app.R.string.ime_panel_open)
-            isAllCaps = false
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setBackgroundColor(Color.parseColor("#DDE5F0"))
-            setTextColor(Color.parseColor("#111827"))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(40)
-            )
-            setOnClickListener {
-                isPanelVisible = true
-                updateModeVisibility()
-                refreshPanels()
-            }
-        }
-        quickActions.addView(openPanelButton)
-        root.addView(quickActions)
-
-        panelSection = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
-        }
-        val tabRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 0, 0, dp(8))
-        }
-        keyboardTabButton = createModeButton(
-            getString(com.clipsync.app.R.string.ime_panel_keyboard)
-        ) {
-            isPanelVisible = false
-            updateModeVisibility()
-        }
-        clipboardTabButton = createModeButton(
-            getString(com.clipsync.app.R.string.ime_panel_clipboard)
-        ) {
-            isPanelVisible = true
-            activePanel = ImePanel.Clipboard
-            updateModeVisibility()
-            refreshPanels()
-        }
-        devicesTabButton = createModeButton(
-            getString(com.clipsync.app.R.string.ime_panel_devices)
-        ) {
-            isPanelVisible = true
-            activePanel = ImePanel.Devices
-            updateModeVisibility()
-            refreshPanels()
-        }
-        tabRow.addView(keyboardTabButton)
-        tabRow.addView(clipboardTabButton)
-        tabRow.addView(devicesTabButton)
-        panelSection?.addView(tabRow)
-
-        val panelScroll = ScrollView(this).apply {
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(248)
-            )
-            setBackgroundColor(Color.parseColor("#E9EEF5"))
-        }
-        panelHost = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(6), dp(6), dp(6), dp(6))
-        }
-        panelScroll.addView(panelHost)
-        panelSection?.addView(panelScroll)
-        root.addView(panelSection)
+        root.addView(createHeader())
+        root.addView(createComposingBar())
+        root.addView(createPanelToggleRow())
+        root.addView(createPanelSection())
 
         keyboardSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            background = createContainerBackground(
+                fillColor = Color.parseColor("#F8FBFF"),
+                strokeColor = Color.parseColor("#D7E1F0"),
+                radiusDp = 18
+            )
+            setPadding(dp(6), dp(8), dp(6), dp(4))
         }
         keyboardRowsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -255,12 +234,147 @@ class ClipSyncInputMethodService : InputMethodService() {
         return root
     }
 
-    private fun createModeButton(label: String, onClick: () -> Unit): Button {
+    private fun createHeader(): View {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(2), dp(4), dp(8))
+
+            addView(TextView(this@ClipSyncInputMethodService).apply {
+                text = getString(R.string.ime_service_name)
+                setTextColor(Color.parseColor("#0F172A"))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                setTypeface(typeface, Typeface.BOLD)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+
+            statusBadgeView = TextView(this@ClipSyncInputMethodService).apply {
+                setPadding(dp(10), dp(5), dp(10), dp(5))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                setTypeface(typeface, Typeface.BOLD)
+            }
+            addView(statusBadgeView)
+        }
+    }
+
+    private fun createComposingBar(): View {
+        composingBar = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            background = createContainerBackground(
+                fillColor = Color.parseColor("#FDFEFF"),
+                strokeColor = Color.parseColor("#CAD7EA"),
+                radiusDp = 18
+            )
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(8)
+            }
+        }
+
+        composingTextView = TextView(this).apply {
+            setTextColor(Color.parseColor("#475569"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTypeface(typeface, Typeface.BOLD)
+        }
+        composingBar?.addView(composingTextView)
+
+        candidateScrollView = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            setPadding(0, dp(8), 0, 0)
+        }
+        candidateRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        candidateScrollView?.addView(candidateRow)
+        composingBar?.addView(candidateScrollView)
+        return composingBar!!
+    }
+
+    private fun createPanelToggleRow(): View {
+        panelToggleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, dp(8))
+        }
+
+        clipboardTabButton = createPanelToggleButton(
+            label = getString(R.string.ime_panel_clipboard),
+            iconRes = android.R.drawable.ic_menu_agenda
+        ) {
+            togglePanel(ImePanel.Clipboard)
+        }
+        devicesTabButton = createPanelToggleButton(
+            label = getString(R.string.ime_panel_devices),
+            iconRes = android.R.drawable.ic_menu_share
+        ) {
+            togglePanel(ImePanel.Devices)
+        }
+
+        panelToggleRow?.addView(clipboardTabButton)
+        panelToggleRow?.addView(devicesTabButton)
+        return panelToggleRow!!
+    }
+
+    private fun createPanelSection(): View {
+        panelSection = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            background = createContainerBackground(
+                fillColor = Color.parseColor("#F7FAFE"),
+                strokeColor = Color.parseColor("#D6E0EE"),
+                radiusDp = 18
+            )
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(8)
+            }
+        }
+
+        panelSection?.addView(TextView(this).apply {
+            text = getString(R.string.ime_panel_hint)
+            setTextColor(Color.parseColor("#64748B"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setPadding(dp(4), dp(0), dp(4), dp(6))
+        })
+
+        val panelScroll = ScrollView(this).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(210)
+            )
+        }
+        panelHost = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        panelScroll.addView(panelHost)
+        panelSection?.addView(panelScroll)
+
+        return panelSection!!
+    }
+
+    private fun createPanelToggleButton(
+        label: String,
+        iconRes: Int,
+        onClick: () -> Unit
+    ): Button {
         return Button(this).apply {
-            text = label
+            text = "  $label"
             isAllCaps = false
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f).apply {
+            minHeight = 0
+            minimumHeight = 0
+            minimumWidth = 0
+            gravity = Gravity.CENTER
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTypeface(typeface, Typeface.BOLD)
+            setCompoundDrawablesWithIntrinsicBounds(iconRes, 0, 0, 0)
+            compoundDrawablePadding = dp(4)
+            layoutParams = LinearLayout.LayoutParams(0, dp(38), 1f).apply {
                 leftMargin = dp(3)
                 rightMargin = dp(3)
             }
@@ -272,6 +386,18 @@ class ClipSyncInputMethodService : InputMethodService() {
         panelSection?.visibility = if (isPanelVisible) View.VISIBLE else View.GONE
         keyboardSection?.visibility = if (isPanelVisible) View.GONE else View.VISIBLE
         renderPanelSelection()
+    }
+
+    private fun togglePanel(targetPanel: ImePanel) {
+        if (isPanelVisible && activePanel == targetPanel) {
+            isPanelVisible = false
+            updateModeVisibility()
+            return
+        }
+        activePanel = targetPanel
+        isPanelVisible = true
+        updateModeVisibility()
+        renderActivePanel()
     }
 
     private fun renderKeyboard() {
@@ -288,53 +414,58 @@ class ClipSyncInputMethodService : InputMethodService() {
                 val row1 = "q w e r t y u i o p".split(" ").map { letterKey(it) }
                 val row2 = "a s d f g h j k l".split(" ").map { letterKey(it) }
                 val row3 = listOf(
-                    KeySpec.Special(SpecialKey.Shift, getString(com.clipsync.app.R.string.ime_action_shift), 1.35f)
+                    KeySpec.Special(SpecialKey.Shift, getString(R.string.ime_action_shift), 1.35f)
                 ) + "z x c v b n m".split(" ").map { letterKey(it) } + listOf(
-                    KeySpec.Special(SpecialKey.Delete, getString(com.clipsync.app.R.string.ime_action_delete), 1.35f)
+                    KeySpec.Special(SpecialKey.Delete, getString(R.string.ime_action_delete), 1.35f)
                 )
                 val row4 = listOf(
-                    KeySpec.Special(SpecialKey.ModeNumbers, getString(com.clipsync.app.R.string.ime_action_numbers), 1.2f),
-                    KeySpec.Special(SpecialKey.NextKeyboard, getString(com.clipsync.app.R.string.ime_action_next_keyboard), 1f),
-                    KeySpec.Text(",", ",", 0.9f),
-                    KeySpec.Special(SpecialKey.Space, getString(com.clipsync.app.R.string.ime_action_space), 3.2f),
-                    KeySpec.Text(".", ".", 0.9f),
-                    KeySpec.Special(SpecialKey.Enter, getString(com.clipsync.app.R.string.ime_action_enter), 1.3f)
+                    KeySpec.Special(SpecialKey.SystemKeyboard, getString(R.string.ime_action_switch_keyboard), 1.05f),
+                    KeySpec.Special(SpecialKey.ToggleLanguage, resolveLanguageToggleLabel(), 1f),
+                    KeySpec.Special(SpecialKey.ModeNumbers, getString(R.string.ime_action_numbers), 1f),
+                    KeySpec.Text(resolveCommaLabel(), resolveCommaOutput(), 0.8f),
+                    KeySpec.Special(SpecialKey.Space, resolveSpaceLabel(), 3.6f),
+                    KeySpec.Text(resolvePeriodLabel(), resolvePeriodOutput(), 0.8f),
+                    KeySpec.Special(SpecialKey.Enter, resolveEnterLabel(), 1.2f)
                 )
                 listOf(row1, row2, row3, row4)
             }
+
             KeyboardMode.Numbers -> {
                 val row1 = "1 2 3 4 5 6 7 8 9 0".split(" ").map { KeySpec.Text(it, it) }
                 val row2 = "@ # ¥ _ & - + ( ) /".split(" ").map { KeySpec.Text(it, it) }
                 val row3 = listOf(
-                    KeySpec.Special(SpecialKey.ModeSymbols, getString(com.clipsync.app.R.string.ime_action_symbols), 1.25f)
+                    KeySpec.Special(SpecialKey.ModeSymbols, getString(R.string.ime_action_symbols), 1.2f)
                 ) + "* \" ' : ; ! ?".split(" ").map { KeySpec.Text(it, it) } + listOf(
-                    KeySpec.Special(SpecialKey.Delete, getString(com.clipsync.app.R.string.ime_action_delete), 1.35f)
+                    KeySpec.Special(SpecialKey.Delete, getString(R.string.ime_action_delete), 1.35f)
                 )
                 val row4 = listOf(
-                    KeySpec.Special(SpecialKey.ModeLetters, getString(com.clipsync.app.R.string.ime_action_letters), 1.2f),
-                    KeySpec.Special(SpecialKey.NextKeyboard, getString(com.clipsync.app.R.string.ime_action_next_keyboard), 1f),
-                    KeySpec.Text(",", ",", 0.9f),
-                    KeySpec.Special(SpecialKey.Space, getString(com.clipsync.app.R.string.ime_action_space), 3.2f),
-                    KeySpec.Text(".", ".", 0.9f),
-                    KeySpec.Special(SpecialKey.Enter, getString(com.clipsync.app.R.string.ime_action_enter), 1.3f)
+                    KeySpec.Special(SpecialKey.SystemKeyboard, getString(R.string.ime_action_switch_keyboard), 1.05f),
+                    KeySpec.Special(SpecialKey.ToggleLanguage, resolveLanguageToggleLabel(), 1f),
+                    KeySpec.Special(SpecialKey.ModeLetters, getString(R.string.ime_action_letters), 1f),
+                    KeySpec.Text(resolveCommaLabel(), resolveCommaOutput(), 0.8f),
+                    KeySpec.Special(SpecialKey.Space, resolveSpaceLabel(), 3.6f),
+                    KeySpec.Text(resolvePeriodLabel(), resolvePeriodOutput(), 0.8f),
+                    KeySpec.Special(SpecialKey.Enter, resolveEnterLabel(), 1.2f)
                 )
                 listOf(row1, row2, row3, row4)
             }
+
             KeyboardMode.Symbols -> {
                 val row1 = "[ ] { } # % ^ * + =".split(" ").map { KeySpec.Text(it, it) }
                 val row2 = "_ \\ | ~ < > € £ ¥ •".split(" ").map { KeySpec.Text(it, it) }
                 val row3 = listOf(
-                    KeySpec.Special(SpecialKey.ModeNumbers, getString(com.clipsync.app.R.string.ime_action_numbers), 1.25f)
+                    KeySpec.Special(SpecialKey.ModeNumbers, getString(R.string.ime_action_numbers), 1.2f)
                 ) + ". , ? ! ' \" : ; /".split(" ").map { KeySpec.Text(it, it) } + listOf(
-                    KeySpec.Special(SpecialKey.Delete, getString(com.clipsync.app.R.string.ime_action_delete), 1.35f)
+                    KeySpec.Special(SpecialKey.Delete, getString(R.string.ime_action_delete), 1.35f)
                 )
                 val row4 = listOf(
-                    KeySpec.Special(SpecialKey.ModeLetters, getString(com.clipsync.app.R.string.ime_action_letters), 1.2f),
-                    KeySpec.Special(SpecialKey.NextKeyboard, getString(com.clipsync.app.R.string.ime_action_next_keyboard), 1f),
-                    KeySpec.Text("-", "-", 0.9f),
-                    KeySpec.Special(SpecialKey.Space, getString(com.clipsync.app.R.string.ime_action_space), 3.2f),
-                    KeySpec.Text("@", "@", 0.9f),
-                    KeySpec.Special(SpecialKey.Enter, getString(com.clipsync.app.R.string.ime_action_enter), 1.3f)
+                    KeySpec.Special(SpecialKey.SystemKeyboard, getString(R.string.ime_action_switch_keyboard), 1.05f),
+                    KeySpec.Special(SpecialKey.ToggleLanguage, resolveLanguageToggleLabel(), 1f),
+                    KeySpec.Special(SpecialKey.ModeLetters, getString(R.string.ime_action_letters), 1f),
+                    KeySpec.Text("-", "-", 0.8f),
+                    KeySpec.Special(SpecialKey.Space, resolveSpaceLabel(), 3.6f),
+                    KeySpec.Text("@", "@", 0.8f),
+                    KeySpec.Special(SpecialKey.Enter, resolveEnterLabel(), 1.2f)
                 )
                 listOf(row1, row2, row3, row4)
             }
@@ -356,100 +487,168 @@ class ClipSyncInputMethodService : InputMethodService() {
         return Button(this).apply {
             text = key.label
             isAllCaps = false
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            setTextColor(Color.parseColor("#111827"))
-            setBackgroundColor(
-                when (key) {
-                    is KeySpec.Special -> if (key.action == SpecialKey.Space) Color.parseColor("#FFFFFF") else Color.parseColor("#DDE5F0")
-                    is KeySpec.Text -> Color.parseColor("#FFFFFF")
-                }
-            )
+            minHeight = 0
+            minimumHeight = 0
+            minimumWidth = 0
+            gravity = Gravity.CENTER
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (key.weight >= 3f) 13f else 15f)
+            setTypeface(typeface, if (key is KeySpec.Text) Typeface.NORMAL else Typeface.BOLD)
+            setTextColor(resolveKeyTextColor(key))
+            background = createKeyBackground(key)
             layoutParams = LinearLayout.LayoutParams(0, dp(48), key.weight).apply {
                 leftMargin = dp(3)
                 rightMargin = dp(3)
             }
             setOnClickListener { onKeyPressed(key) }
+
+            if (key is KeySpec.Special && key.action == SpecialKey.Delete) {
+                setOnTouchListener { _, event ->
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> startDeleteRepeat()
+                        MotionEvent.ACTION_UP,
+                        MotionEvent.ACTION_CANCEL -> stopDeleteRepeat()
+                    }
+                    false
+                }
+            }
+
+            if (key is KeySpec.Special && key.action == SpecialKey.SystemKeyboard) {
+                setOnLongClickListener {
+                    showInputMethodPicker()
+                    true
+                }
+            }
         }
     }
 
     private fun onKeyPressed(key: KeySpec) {
         when (key) {
-            is KeySpec.Text -> {
-                currentInputConnection?.commitText(key.output, 1)
-                if (keyboardMode == KeyboardMode.Letters && isUppercase) {
-                    isUppercase = false
-                    renderKeyboard()
-                }
-            }
+            is KeySpec.Text -> handleTextKey(key)
             is KeySpec.Special -> handleSpecialKey(key.action)
+        }
+    }
+
+    private fun handleTextKey(key: KeySpec.Text) {
+        if (isChineseMode && keyboardMode == KeyboardMode.Letters && key.output.length == 1 && key.output[0].isLetter()) {
+            appendPinyin(key.output)
+            return
+        }
+
+        if (isChineseMode && composingPinyin.isNotEmpty()) {
+            commitComposingText()
+        }
+
+        currentInputConnection?.commitText(key.output, 1)
+        if (keyboardMode == KeyboardMode.Letters && isUppercase && !isChineseMode) {
+            isUppercase = false
+            renderKeyboard()
         }
     }
 
     private fun handleSpecialKey(action: SpecialKey) {
         when (action) {
             SpecialKey.Shift -> {
-                isUppercase = !isUppercase
-                renderKeyboard()
-            }
-            SpecialKey.Delete -> currentInputConnection?.deleteSurroundingText(1, 0)
-            SpecialKey.Space -> currentInputConnection?.commitText(" ", 1)
-            SpecialKey.Enter -> {
-                val handled = currentInputConnection?.performEditorAction(EditorInfo.IME_ACTION_DONE) ?: false
-                if (!handled) {
-                    currentInputConnection?.commitText("\n", 1)
+                if (!isChineseMode) {
+                    isUppercase = !isUppercase
+                    renderKeyboard()
                 }
             }
+
+            SpecialKey.Delete -> {
+                if (composingPinyin.isNotEmpty()) {
+                    removeLastPinyinLetter()
+                } else {
+                    deleteSelectedOrPreviousText()
+                }
+            }
+
+            SpecialKey.Space -> {
+                if (composingPinyin.isNotEmpty()) {
+                    commitComposingText(appendSpace = true)
+                } else {
+                    currentInputConnection?.commitText(" ", 1)
+                }
+            }
+
+            SpecialKey.Enter -> {
+                if (composingPinyin.isNotEmpty()) {
+                    commitComposingText()
+                }
+                performEnterAction()
+            }
+
             SpecialKey.ModeLetters -> {
                 keyboardMode = KeyboardMode.Letters
+                syncShiftStateForCursor(force = true)
                 renderKeyboard()
             }
+
             SpecialKey.ModeNumbers -> {
+                if (composingPinyin.isNotEmpty()) {
+                    commitComposingText()
+                }
                 keyboardMode = KeyboardMode.Numbers
                 renderKeyboard()
             }
+
             SpecialKey.ModeSymbols -> {
+                if (composingPinyin.isNotEmpty()) {
+                    commitComposingText()
+                }
                 keyboardMode = KeyboardMode.Symbols
                 renderKeyboard()
             }
-            SpecialKey.NextKeyboard -> switchToNextKeyboard()
+
+            SpecialKey.ToggleLanguage -> {
+                if (composingPinyin.isNotEmpty()) {
+                    commitComposingText()
+                }
+                isChineseMode = !isChineseMode
+                keyboardMode = KeyboardMode.Letters
+                syncShiftStateForCursor(force = true)
+                renderComposingBar()
+                renderKeyboard()
+            }
+
+            SpecialKey.SystemKeyboard -> switchToSystemKeyboard()
         }
     }
 
-    private fun switchToNextKeyboard() {
+    private fun switchToSystemKeyboard() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            switchToNextInputMethod(false)
+            val switched = switchToNextInputMethod(false)
+            if (!switched) {
+                showInputMethodPicker()
+            }
         } else {
-            val manager = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
-            manager?.showInputMethodPicker()
+            showInputMethodPicker()
         }
     }
 
-    private fun observeClipboardFlows() {
+    private fun showInputMethodPicker() {
+        val manager = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
+        manager?.showInputMethodPicker()
+    }
+
+    private fun observeLocalData() {
         scope.launch {
-            clipboardMonitor.currentText.collectLatest { text ->
-                if (text != null && isClipboardMonitoring) {
-                    FileLogger.d(TAG, "IME observed clipboard text change, preparing sync")
-                    syncEngine.pushToServer(text)
-                    refreshHistoryStrip()
-                    refreshPanels()
+            database.clipboardDao().getRecentFlow(20).collectLatest { items ->
+                recentHistory = items
+                launch(Dispatchers.Main) {
+                    if (isPanelVisible) {
+                        renderActivePanel()
+                    }
                 }
             }
         }
 
         scope.launch {
-            clipboardMonitor.currentContent.collectLatest { content ->
-                if (content != null && isClipboardMonitoring && content.contentType == ClipboardContentType.IMAGE) {
-                    FileLogger.d(TAG, "IME observed clipboard image change, preparing sync")
-                    content.imageBase64?.let { base64 ->
-                        syncEngine.pushImageToServer(
-                            imageBase64 = base64,
-                            format = content.imageFormat,
-                            size = content.sizeBytes,
-                            checksum = content.checksum
-                        )
+            database.deviceDao().getOnlineDevicesFlow().collectLatest { devices ->
+                onlineDevices = devices
+                launch(Dispatchers.Main) {
+                    if (isPanelVisible && activePanel == ImePanel.Devices) {
+                        renderDevicesPanel(onlineDevices, recentHistory)
                     }
-                    refreshHistoryStrip()
-                    refreshPanels()
                 }
             }
         }
@@ -459,12 +658,13 @@ class ClipSyncInputMethodService : InputMethodService() {
         scope.launch {
             webSocketClient.connectionState.collectLatest { state ->
                 currentConnectionState = state
-                updateStatus()
+                updateStatusBadge()
                 when (state) {
                     is ConnectionState.Connected -> {
                         FileLogger.d(TAG, "IME WebSocket connected, sending auth")
                         sendAuth()
                     }
+
                     ConnectionState.Connecting -> FileLogger.d(TAG, "IME WebSocket connecting")
                     ConnectionState.Disconnected -> FileLogger.d(TAG, "IME WebSocket disconnected")
                     is ConnectionState.Error -> FileLogger.e(TAG, "IME WebSocket error: ${state.message}")
@@ -491,25 +691,14 @@ class ClipSyncInputMethodService : InputMethodService() {
         when (wsMessage.type) {
             MessageType.AuthResponse -> handleAuthResponse(wsMessage.payload)
             MessageType.HeartbeatAck -> Unit
-            MessageType.ClipboardSync -> {
-                FileLogger.d(TAG, "IME received clipboard_sync")
-                syncEngine.handleIncomingSync(wsMessage.payload)
-                refreshHistoryStrip()
-                refreshPanels()
-            }
-            MessageType.ClipboardHistory -> {
-                syncEngine.handleHistoryResponse(wsMessage.payload)
-                refreshHistoryStrip()
-                refreshPanels()
-            }
-            MessageType.DeviceListResponse -> {
-                handleDeviceListResponse(wsMessage.payload)
-                refreshPanels()
-            }
+            MessageType.ClipboardSync -> Unit
+            MessageType.ClipboardHistory -> Unit
+            MessageType.DeviceListResponse -> handleDeviceListResponse(wsMessage.payload)
             MessageType.Error -> {
                 val message = wsMessage.payload["message"]?.jsonPrimitive?.content ?: "Unknown error"
                 FileLogger.e(TAG, "IME server error: $message")
             }
+
             MessageType.Ping -> webSocketClient.send(WsMessageBuilder.pong())
             else -> Unit
         }
@@ -530,10 +719,7 @@ class ClipSyncInputMethodService : InputMethodService() {
             }
         }
         heartbeatManager.start()
-        syncEngine.requestHistory()
         webSocketClient.send(WsMessageBuilder.deviceList())
-        refreshHistoryStrip()
-        refreshPanels()
     }
 
     private fun handleDeviceListResponse(payload: JsonObject) {
@@ -579,78 +765,20 @@ class ClipSyncInputMethodService : InputMethodService() {
         }
     }
 
-    private fun startClipboardMonitoring() {
-        if (isClipboardMonitoring) return
-        isClipboardMonitoring = true
-        clipboardMonitor.start()
-        clipboardMonitor.refreshNow()
-    }
-
-    private fun stopClipboardMonitoring() {
-        if (!isClipboardMonitoring) return
-        isClipboardMonitoring = false
-        clipboardMonitor.stop()
-    }
-
-    private fun refreshHistoryStrip() {
-        scope.launch(Dispatchers.IO) {
-            val recentItems = database.clipboardDao().getRecent(6)
-            launch(Dispatchers.Main) {
-                renderHistory(recentItems)
-            }
+    private fun refreshUiFromCache() {
+        renderComposingBar()
+        if (isPanelVisible) {
+            renderActivePanel()
+        } else {
+            renderPanelSelection()
         }
     }
 
-    private fun refreshPanels() {
-        scope.launch(Dispatchers.IO) {
-            val historyDeferred = async { database.clipboardDao().getRecent(20) }
-            val devicesDeferred = async { database.deviceDao().getOnlineDevices() }
-            val history = historyDeferred.await()
-            val devices = devicesDeferred.await()
-            launch(Dispatchers.Main) {
-                renderPanelSelection()
-                when (activePanel) {
-                    ImePanel.Clipboard -> renderClipboardPanel(history)
-                    ImePanel.Devices -> renderDevicesPanel(devices, history)
-                }
-            }
-        }
-    }
-
-    private fun renderHistory(items: List<ClipboardEntity>) {
-        val container = historyRow ?: return
-        container.removeAllViews()
-
-        if (items.isEmpty()) {
-            container.addView(TextView(this).apply {
-                text = getString(com.clipsync.app.R.string.ime_history_empty)
-                setTextColor(Color.parseColor("#6B7280"))
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setPadding(dp(10), dp(8), dp(10), dp(8))
-            })
-            return
-        }
-
-        items.forEach { item ->
-            val label = when (item.contentType) {
-                "image" -> "[Image] ${item.sourceDeviceName.ifBlank { "ClipSync" }}"
-                else -> item.content.replace("\n", " ").take(24).ifBlank { " " }
-            }
-
-            container.addView(TextView(this).apply {
-                text = label
-                setTextColor(Color.parseColor("#1F2937"))
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setBackgroundColor(Color.parseColor("#E5EEF9"))
-                setPadding(dp(12), dp(8), dp(12), dp(8))
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    rightMargin = dp(6)
-                }
-                setOnClickListener { onHistoryItemSelected(item) }
-            })
+    private fun renderActivePanel() {
+        renderPanelSelection()
+        when (activePanel) {
+            ImePanel.Clipboard -> renderClipboardPanel(recentHistory)
+            ImePanel.Devices -> renderDevicesPanel(onlineDevices, recentHistory)
         }
     }
 
@@ -659,19 +787,17 @@ class ClipSyncInputMethodService : InputMethodService() {
         container.removeAllViews()
 
         if (items.isEmpty()) {
-            container.addView(createEmptyPanelText(getString(com.clipsync.app.R.string.ime_history_empty)))
+            container.addView(createEmptyPanelText(getString(R.string.ime_history_empty)))
             return
         }
 
         items.forEach { item ->
             val title = when (item.contentType) {
-                "image" -> "[Image] ${item.sourceDeviceName.ifBlank { "ClipSync" }}"
+                "image" -> getString(R.string.ime_item_image, item.sourceDeviceName.ifBlank { "ClipSync" })
                 else -> item.content.replace("\n", " ").take(60).ifBlank { " " }
             }
-            val subtitle = item.sourceDeviceName.ifBlank {
-                getString(com.clipsync.app.R.string.ime_panel_recent)
-            }
-            container.addView(createPanelCard(title, subtitle) {
+            val subtitle = item.sourceDeviceName.ifBlank { getString(R.string.ime_panel_recent) }
+            container.addView(createPanelCard(title, subtitle, getString(R.string.ime_action_insert)) {
                 onHistoryItemSelected(item)
             })
         }
@@ -682,32 +808,39 @@ class ClipSyncInputMethodService : InputMethodService() {
         container.removeAllViews()
 
         if (devices.isEmpty()) {
-            container.addView(createEmptyPanelText(getString(com.clipsync.app.R.string.ime_devices_empty)))
+            container.addView(createEmptyPanelText(getString(R.string.ime_devices_empty)))
             return
         }
 
         devices.forEach { device ->
             val latestItem = history.firstOrNull { it.sourceDeviceId == device.deviceId }
             val subtitle = buildString {
-                append(if (device.isOnline) "Online" else "Offline")
+                append(if (device.isOnline) getString(R.string.devices_online) else getString(R.string.devices_offline))
                 append(" · ")
                 append(
                     latestItem?.let {
-                        if (it.contentType == "image") "[Image] ${it.sourceDeviceName.ifBlank { device.deviceName }}"
-                        else it.content.replace("\n", " ").take(50)
-                    } ?: getString(com.clipsync.app.R.string.ime_device_content_empty)
+                        if (it.contentType == "image") {
+                            getString(R.string.ime_item_image, it.sourceDeviceName.ifBlank { device.deviceName })
+                        } else {
+                            it.content.replace("\n", " ").take(44)
+                        }
+                    } ?: getString(R.string.ime_device_content_empty)
                 )
             }
-            container.addView(createPanelCard(device.deviceName, subtitle) {
+            container.addView(createPanelCard(device.deviceName, subtitle, getString(R.string.ime_action_insert)) {
                 latestItem?.let { onHistoryItemSelected(it) }
             })
         }
     }
 
-    private fun createPanelCard(title: String, subtitle: String, onClick: () -> Unit): View {
+    private fun createPanelCard(title: String, subtitle: String, actionLabel: String, onClick: () -> Unit): View {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#FFFFFF"))
+            background = createContainerBackground(
+                fillColor = Color.parseColor("#FFFFFF"),
+                strokeColor = Color.parseColor("#D4DDEA"),
+                radiusDp = 16
+            )
             setPadding(dp(12), dp(10), dp(12), dp(10))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -715,18 +848,28 @@ class ClipSyncInputMethodService : InputMethodService() {
             ).apply {
                 bottomMargin = dp(8)
             }
+
             addView(TextView(this@ClipSyncInputMethodService).apply {
                 text = title
-                setTextColor(Color.parseColor("#111827"))
+                setTextColor(Color.parseColor("#0F172A"))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTypeface(typeface, Typeface.BOLD)
             })
+
             addView(TextView(this@ClipSyncInputMethodService).apply {
                 text = subtitle
-                setTextColor(Color.parseColor("#6B7280"))
+                setTextColor(Color.parseColor("#64748B"))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setPadding(0, dp(4), 0, 0)
+                setPadding(0, dp(4), 0, dp(8))
             })
+
+            addView(TextView(this@ClipSyncInputMethodService).apply {
+                text = actionLabel
+                setTextColor(Color.parseColor("#2563EB"))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTypeface(typeface, Typeface.BOLD)
+            })
+
             setOnClickListener { onClick() }
         }
     }
@@ -734,7 +877,7 @@ class ClipSyncInputMethodService : InputMethodService() {
     private fun createEmptyPanelText(message: String): View {
         return TextView(this).apply {
             text = message
-            setTextColor(Color.parseColor("#6B7280"))
+            setTextColor(Color.parseColor("#64748B"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setPadding(dp(10), dp(12), dp(10), dp(12))
         }
@@ -758,6 +901,7 @@ class ClipSyncInputMethodService : InputMethodService() {
                     )
                 }
             }
+
             else -> {
                 currentInputConnection?.commitText(item.content, 1)
                 clipboardMonitor.markNextReadFromInAppCopy()
@@ -765,44 +909,334 @@ class ClipSyncInputMethodService : InputMethodService() {
                 syncEngine.pushToServer(item.content, force = true)
             }
         }
-        refreshPanels()
+
+        isPanelVisible = false
+        updateModeVisibility()
     }
 
-    private fun updateStatus() {
-        val target = statusTextView ?: return
-        target.text = when (currentConnectionState) {
-            is ConnectionState.Connected -> getString(com.clipsync.app.R.string.ime_status_connected)
-            ConnectionState.Connecting -> getString(com.clipsync.app.R.string.ime_status_connecting)
-            ConnectionState.Disconnected -> getString(com.clipsync.app.R.string.ime_status_disconnected)
-            is ConnectionState.Error -> getString(com.clipsync.app.R.string.ime_status_disconnected)
+    private fun updateStatusBadge() {
+        val badge = statusBadgeView ?: return
+        val (text, fillColor, textColor) = when (currentConnectionState) {
+            is ConnectionState.Connected -> Triple(
+                getString(R.string.ime_status_connected),
+                Color.parseColor("#DBEAFE"),
+                Color.parseColor("#1D4ED8")
+            )
+
+            ConnectionState.Connecting -> Triple(
+                getString(R.string.ime_status_connecting),
+                Color.parseColor("#FEF3C7"),
+                Color.parseColor("#B45309")
+            )
+
+            ConnectionState.Disconnected,
+            is ConnectionState.Error -> Triple(
+                getString(R.string.ime_status_disconnected),
+                Color.parseColor("#E2E8F0"),
+                Color.parseColor("#475569")
+            )
         }
+
+        badge.text = text
+        badge.setTextColor(textColor)
+        badge.background = createContainerBackground(fillColor, fillColor, 999)
     }
 
     private fun renderPanelSelection() {
-        val selectedColor = Color.parseColor("#2563EB")
-        val normalColor = Color.parseColor("#DDE5F0")
-        val selectedText = Color.parseColor("#FFFFFF")
-        val normalText = Color.parseColor("#111827")
+        val selectedFill = Color.parseColor("#DBEAFE")
+        val selectedText = Color.parseColor("#1D4ED8")
+        val normalFill = Color.parseColor("#EEF3F9")
+        val normalText = Color.parseColor("#475569")
 
-        keyboardTabButton?.apply {
-            setBackgroundColor(if (!isPanelVisible) selectedColor else normalColor)
-            setTextColor(if (!isPanelVisible) selectedText else normalText)
-        }
         clipboardTabButton?.apply {
             val selected = isPanelVisible && activePanel == ImePanel.Clipboard
-            setBackgroundColor(if (selected) selectedColor else normalColor)
+            setBackgroundColor(if (selected) selectedFill else normalFill)
             setTextColor(if (selected) selectedText else normalText)
         }
         devicesTabButton?.apply {
             val selected = isPanelVisible && activePanel == ImePanel.Devices
-            setBackgroundColor(if (selected) selectedColor else normalColor)
+            setBackgroundColor(if (selected) selectedFill else normalFill)
             setTextColor(if (selected) selectedText else normalText)
         }
     }
 
     private fun letterKey(value: String): KeySpec.Text {
-        val rendered = if (isUppercase) value.uppercase() else value.lowercase()
+        val rendered = if (!isChineseMode && isUppercase) value.uppercase() else value.lowercase()
         return KeySpec.Text(rendered, rendered)
+    }
+
+    private fun syncKeyboardStateForEditor(info: EditorInfo?) {
+        keyboardMode = when (info?.inputType?.and(InputType.TYPE_MASK_CLASS)) {
+            InputType.TYPE_CLASS_NUMBER,
+            InputType.TYPE_CLASS_DATETIME,
+            InputType.TYPE_CLASS_PHONE -> KeyboardMode.Numbers
+            else -> keyboardMode.takeIf { it == KeyboardMode.Symbols } ?: KeyboardMode.Letters
+        }
+        isUppercase = shouldAutoCapitalize(info)
+        renderComposingBar()
+    }
+
+    private fun syncShiftStateForCursor(force: Boolean = false) {
+        val newUppercase = shouldAutoCapitalize(currentEditorInfo)
+        if (force || newUppercase != isUppercase) {
+            isUppercase = newUppercase
+        }
+    }
+
+    private fun shouldAutoCapitalize(info: EditorInfo?): Boolean {
+        if (keyboardMode != KeyboardMode.Letters || isChineseMode) return false
+
+        val inputType = info?.inputType ?: return false
+        val variation = inputType and InputType.TYPE_MASK_VARIATION
+        if (variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS ||
+            variation == InputType.TYPE_TEXT_VARIATION_URI ||
+            variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+            variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
+            variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD ||
+            variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS
+        ) {
+            return false
+        }
+
+        val capsRequested = inputType and InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS != 0 ||
+            inputType and InputType.TYPE_TEXT_FLAG_CAP_WORDS != 0 ||
+            inputType and InputType.TYPE_TEXT_FLAG_CAP_SENTENCES != 0
+        if (!capsRequested) return false
+
+        val extractedText = currentInputConnection?.getExtractedText(
+            android.view.inputmethod.ExtractedTextRequest(),
+            0
+        ) ?: return false
+
+        val selectionStart = extractedText.selectionStart
+        val text = extractedText.text ?: return selectionStart <= 0
+        if (selectionStart <= 0) return true
+        if (selectionStart > text.length) return false
+
+        val previousChar = text[selectionStart - 1]
+        return previousChar == '.' || previousChar == '!' || previousChar == '?' || previousChar.isWhitespace()
+    }
+
+    private fun performEnterAction() {
+        val action = currentEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION)
+            ?: EditorInfo.IME_ACTION_UNSPECIFIED
+        val handled = if (action != EditorInfo.IME_ACTION_NONE &&
+            action != EditorInfo.IME_ACTION_UNSPECIFIED
+        ) {
+            currentInputConnection?.performEditorAction(action) ?: false
+        } else {
+            false
+        }
+
+        if (!handled) {
+            currentInputConnection?.commitText("\n", 1)
+        }
+    }
+
+    private fun resolveEnterLabel(): String {
+        return when (currentEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION)) {
+            EditorInfo.IME_ACTION_GO -> getString(R.string.ime_action_go)
+            EditorInfo.IME_ACTION_NEXT -> getString(R.string.ime_action_next)
+            EditorInfo.IME_ACTION_SEARCH -> getString(R.string.ime_action_search)
+            EditorInfo.IME_ACTION_SEND -> getString(R.string.ime_action_send)
+            EditorInfo.IME_ACTION_DONE -> getString(R.string.ime_action_done)
+            else -> getString(R.string.ime_action_enter)
+        }
+    }
+
+    private fun resolveLanguageToggleLabel(): String {
+        return if (isChineseMode) getString(R.string.ime_action_chinese) else getString(R.string.ime_action_english)
+    }
+
+    private fun resolveSpaceLabel(): String {
+        if (composingPinyin.isNotEmpty()) {
+            return composingCandidates.firstOrNull()?.take(6) ?: composingPinyin.take(6)
+        }
+        return getString(R.string.ime_action_space)
+    }
+
+    private fun resolveCommaLabel(): String = if (isChineseMode) "，" else ","
+
+    private fun resolveCommaOutput(): String = if (isChineseMode) "，" else ","
+
+    private fun resolvePeriodLabel(): String = if (isChineseMode) "。" else "."
+
+    private fun resolvePeriodOutput(): String = if (isChineseMode) "。" else "."
+
+    private fun deleteSelectedOrPreviousText() {
+        val extractedText = currentInputConnection?.getExtractedText(
+            android.view.inputmethod.ExtractedTextRequest(),
+            0
+        )
+
+        if (extractedText == null) {
+            currentInputConnection?.deleteSurroundingText(1, 0)
+            return
+        }
+
+        val selectedCount = extractedText.selectionEnd - extractedText.selectionStart
+        if (selectedCount > 0) {
+            currentInputConnection?.commitText("", 1)
+        } else {
+            currentInputConnection?.deleteSurroundingText(1, 0)
+        }
+    }
+
+    private fun startDeleteRepeat() {
+        stopDeleteRepeat()
+        deleteRepeatHandler.postDelayed(deleteRepeatRunnable, DELETE_REPEAT_START_DELAY_MS)
+    }
+
+    private fun stopDeleteRepeat() {
+        deleteRepeatHandler.removeCallbacks(deleteRepeatRunnable)
+    }
+
+    private fun createKeyBackground(key: KeySpec): GradientDrawable {
+        val fillColor = when (key) {
+            is KeySpec.Text -> Color.parseColor("#FFFFFF")
+            is KeySpec.Special -> when (key.action) {
+                SpecialKey.Enter -> Color.parseColor("#2563EB")
+                SpecialKey.SystemKeyboard -> Color.parseColor("#DCE8F8")
+                SpecialKey.ToggleLanguage -> if (isChineseMode) Color.parseColor("#C7DDFD") else Color.parseColor("#E2E8F0")
+                SpecialKey.ModeLetters -> if (keyboardMode == KeyboardMode.Letters) Color.parseColor("#C7DDFD") else Color.parseColor("#E2E8F0")
+                SpecialKey.ModeNumbers -> if (keyboardMode == KeyboardMode.Numbers) Color.parseColor("#C7DDFD") else Color.parseColor("#E2E8F0")
+                SpecialKey.ModeSymbols -> if (keyboardMode == KeyboardMode.Symbols) Color.parseColor("#C7DDFD") else Color.parseColor("#E2E8F0")
+                SpecialKey.Shift -> if (isUppercase) Color.parseColor("#C7DDFD") else Color.parseColor("#E2E8F0")
+                else -> if (key.action == SpecialKey.Space) Color.parseColor("#FFFFFF") else Color.parseColor("#E2E8F0")
+            }
+        }
+
+        return createContainerBackground(
+            fillColor = fillColor,
+            strokeColor = Color.parseColor("#D3DDEA"),
+            radiusDp = 14
+        )
+    }
+
+    private fun resolveKeyTextColor(key: KeySpec): Int {
+        return if (key is KeySpec.Special && key.action == SpecialKey.Enter) {
+            Color.parseColor("#FFFFFF")
+        } else {
+            Color.parseColor("#0F172A")
+        }
+    }
+
+    private fun appendPinyin(value: String) {
+        composingPinyin += value.lowercase()
+        updateComposingState()
+    }
+
+    private fun removeLastPinyinLetter() {
+        if (composingPinyin.isEmpty()) return
+        composingPinyin = composingPinyin.dropLast(1)
+        updateComposingState()
+    }
+
+    private fun updateComposingState() {
+        composingCandidates = PinyinCandidateEngine.getCandidates(composingPinyin, CANDIDATE_LIMIT)
+        if (composingPinyin.isEmpty()) {
+            currentInputConnection?.finishComposingText()
+        } else {
+            currentInputConnection?.setComposingText(composingPinyin, 1)
+        }
+        renderComposingBar()
+        renderKeyboard()
+    }
+
+    private fun commitComposingText(selected: String? = null, appendSpace: Boolean = false) {
+        if (composingPinyin.isEmpty()) {
+            if (appendSpace) {
+                currentInputConnection?.commitText(" ", 1)
+            }
+            return
+        }
+
+        val committed = selected ?: composingCandidates.firstOrNull() ?: composingPinyin
+        currentInputConnection?.finishComposingText()
+        currentInputConnection?.commitText(committed, 1)
+        if (appendSpace) {
+            currentInputConnection?.commitText(" ", 1)
+        }
+        composingPinyin = ""
+        composingCandidates = emptyList()
+        renderComposingBar()
+        renderKeyboard()
+    }
+
+    private fun renderComposingBar() {
+        val bar = composingBar ?: return
+        val textView = composingTextView ?: return
+        val row = candidateRow ?: return
+
+        val visible = isChineseMode && keyboardMode == KeyboardMode.Letters
+        bar.visibility = if (visible) View.VISIBLE else View.GONE
+        if (!visible) return
+
+        textView.text = if (composingPinyin.isBlank()) {
+            getString(R.string.ime_composing_hint)
+        } else {
+            getString(R.string.ime_composing_prefix, composingPinyin)
+        }
+
+        row.removeAllViews()
+        if (composingPinyin.isBlank()) {
+            return
+        }
+
+        if (composingCandidates.isEmpty()) {
+            row.addView(createCandidateChip(getString(R.string.ime_candidate_raw, composingPinyin), emphasized = true) {
+                commitComposingText(selected = composingPinyin)
+            })
+            return
+        }
+
+        composingCandidates.forEachIndexed { index, candidate ->
+            row.addView(
+                createCandidateChip(
+                    label = "${index + 1}. $candidate",
+                    emphasized = index == 0
+                ) {
+                    commitComposingText(selected = candidate)
+                }
+            )
+        }
+
+        row.addView(createCandidateChip(getString(R.string.ime_candidate_raw, composingPinyin), emphasized = false) {
+            commitComposingText(selected = composingPinyin)
+        })
+
+        candidateScrollView?.post { candidateScrollView?.scrollTo(0, 0) }
+    }
+
+    private fun createCandidateChip(label: String, emphasized: Boolean, onClick: () -> Unit): View {
+        val fillColor = if (emphasized) Color.parseColor("#2563EB") else Color.parseColor("#FFFFFF")
+        val textColor = if (emphasized) Color.parseColor("#FFFFFF") else Color.parseColor("#0F172A")
+        val strokeColor = if (emphasized) Color.parseColor("#2563EB") else Color.parseColor("#D4DDEA")
+
+        return TextView(this).apply {
+            text = label
+            setTextColor(textColor)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, if (emphasized) Typeface.BOLD else Typeface.NORMAL)
+            setPadding(dp(12), dp(9), dp(12), dp(9))
+            background = createContainerBackground(fillColor, strokeColor, 12)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                rightMargin = dp(6)
+            }
+            setOnClickListener { onClick() }
+        }
+    }
+
+    private fun createContainerBackground(fillColor: Int, strokeColor: Int, radiusDp: Int): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(radiusDp).toFloat()
+            setColor(fillColor)
+            setStroke(dp(1), strokeColor)
+        }
     }
 
     private fun dp(value: Int): Int =
@@ -814,6 +1248,9 @@ class ClipSyncInputMethodService : InputMethodService() {
 
     companion object {
         private const val TAG = "ClipSyncIME"
+        private const val DELETE_REPEAT_START_DELAY_MS = 350L
+        private const val DELETE_REPEAT_INTERVAL_MS = 50L
+        private const val CANDIDATE_LIMIT = 12
     }
 }
 
@@ -841,5 +1278,6 @@ private enum class SpecialKey {
     ModeLetters,
     ModeNumbers,
     ModeSymbols,
-    NextKeyboard
+    ToggleLanguage,
+    SystemKeyboard
 }
