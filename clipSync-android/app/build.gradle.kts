@@ -5,6 +5,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+val asciiBuildDir = File(System.getProperty("user.home"), ".clipsync-build/clipSync-android/app")
+val asciiTestWorkingDir = File(System.getProperty("java.io.tmpdir"), "clipsync-test-working")
+layout.buildDirectory.set(asciiBuildDir)
+
 android {
     namespace = "com.clipsync.app"
     compileSdk = 34
@@ -102,4 +106,11 @@ dependencies {
     // Unit Testing
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+}
+
+tasks.withType<Test>().configureEach {
+    doFirst {
+        asciiTestWorkingDir.mkdirs()
+    }
+    workingDir = asciiTestWorkingDir
 }
